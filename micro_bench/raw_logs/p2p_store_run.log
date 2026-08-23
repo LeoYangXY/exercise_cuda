@@ -1,0 +1,59 @@
+=== environment ===
+GPU0=NVIDIA H20 GPU1= compute_cap=9.0
+multiProcessorCount(GPU0) = 78
+canAccessPeer 0->1 = 1
+NVLink GPU0<->GPU1: 18 links x 26.562 GB/s = 478.1 GB/s aggregate (per dir)
+peer access 0->1 enabled OK
+correctness (remote 1blk/8w/U8): mismatches=0  OK
+
+mode            sms     w/sm   unrl    smsp      GB/s    %nvlink  notes
+-------------------------------------------------------------------------------
+TLP               1        1      1       1       1.2       0.3%  kTLP warps/block=1
+TLP               1        2      1       1       2.5       0.5%  kTLP warps/block=2
+TLP               1        4      1       1       5.0       1.0%  kTLP warps/block=4
+TLP               1        8      1       2       9.9       2.1%  kTLP warps/block=8
+TLP               1       16      1       4      19.3       4.0%  kTLP warps/block=16
+TLP               1       32      1       8      36.9       7.7%  kTLP warps/block=32
+ILP               1        1      1       1       1.2       0.3%  kILP U=1 wpb=1
+ILP               1        1      2       1       2.4       0.5%  kILP U=2 wpb=1
+ILP               1        1      4       1       4.4       0.9%  kILP U=4 wpb=1
+ILP               1        1      8       1       7.3       1.5%  kILP U=8 wpb=1
+ILP               1        1     16       1      10.2       2.1%  kILP U=16 wpb=1
+ILP               1        4      8       1      24.6       5.1%  kILP U=8 wpb=4
+ILP               1        8      8       2      44.1       9.2%  kILP U=8 wpb=8
+ILP_sSMSP         1        1      8       1       7.3       1.5%  1 warp x U=8 (SMSP0)
+TLP_sSMSP         1       16      1       4      21.6       4.5%  4 warp(w0,4,8,12) x U=1 same SMSP
+SMscale           1        8      8       2      44.2       9.2%  D sm_scale blocks=1 (8w/U8)
+SMscale           2        8      8       2      89.1      18.6%  D sm_scale blocks=2 (8w/U8)
+SMscale           4        8      8       2     175.7      36.8%  D sm_scale blocks=4 (8w/U8)
+SMscale           8        8      8       2     353.0      73.8%  D sm_scale blocks=8 (8w/U8)
+SMscale          16        8      8       2     371.0      77.6%  D sm_scale blocks=16 (8w/U8)
+SMscale          32        8      8       2     366.9      76.7%  D sm_scale blocks=32 (8w/U8)
+SMscale          64        8      8       2     367.9      76.9%  D sm_scale blocks=64 (8w/U8)
+SMscale          78        8      8       2     363.7      76.1%  D sm_scale blocks=78 (8w/U8)
+locTLP            1        1      1       1       1.2       0.3%  local TLP wpb=1
+locTLP            1        2      1       1       2.5       0.5%  local TLP wpb=2
+locTLP            1        4      1       1       5.0       1.0%  local TLP wpb=4
+locTLP            1        8      1       2      10.0       2.1%  local TLP wpb=8
+locTLP            1       16      1       4      19.5       4.1%  local TLP wpb=16
+locTLP            1       32      1       8      37.6       7.9%  local TLP wpb=32
+locILP            1        1      1       1       1.2       0.3%  local ILP U=1 wpb=1
+locILP            1        1      2       1       2.4       0.5%  local ILP U=2 wpb=1
+locILP            1        1      4       1       4.3       0.9%  local ILP U=4 wpb=1
+locILP            1        1      8       1       7.2       1.5%  local ILP U=8 wpb=1
+locILP            1        1     16       1      10.0       2.1%  local ILP U=16 wpb=1
+locScale          1        8      8       2      46.2       9.7%  local SMscale blocks=1 (8w/U8)
+locScale          2        8      8       2      91.6      19.2%  local SMscale blocks=2 (8w/U8)
+locScale          4        8      8       2     178.5      37.3%  local SMscale blocks=4 (8w/U8)
+locScale          8        8      8       2     343.4      71.8%  local SMscale blocks=8 (8w/U8)
+locScale         16        8      8       2     615.2     128.7%  local SMscale blocks=16 (8w/U8)
+locScale         32        8      8       2    1050.0     219.6%  local SMscale blocks=32 (8w/U8)
+locScale         64        8      8       2    1463.0     306.0%  local SMscale blocks=64 (8w/U8)
+locScale         78        8      8       2    1522.1     318.4%  local SMscale blocks=78 (8w/U8)
+doorbell          1        8      8       2      12.3       2.6%  doorbell K=16 int4
+doorbell          1        8      8       2      35.2       7.4%  doorbell K=256 int4
+doorbell          1        8      8       2      38.8       8.1%  doorbell K=4096 int4
+doorbell          1        8      8       2      44.1       9.2%  doorbell K=inf (none)
+
+NVLink peak reference = 478.1 GB/s (18 x 26.562). %nvlink = GB/s / peak.
+done.
