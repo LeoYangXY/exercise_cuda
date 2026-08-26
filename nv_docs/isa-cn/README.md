@@ -2,9 +2,28 @@
 
 本目录是 [NVIDIA PTX ISA 官方文档](https://docs.nvidia.com/cuda/parallel-thread-execution/index.html) 的中文翻译，由 AI 对照原文、结合 CUDA 背景改写而成，供学习参考。
 
-## 如何使用
+## 如何在线观看（一键看）
 
-直接用浏览器打开 `index.html` 即可（或部署到 GitHub Pages / 任意静态服务器）。
+本项目已托管在 GitHub，开启 GitHub Pages 后即可通过以下链接直接在线浏览（无需下载）：
+
+```
+https://leoyangxy.github.io/learn-cuda-cute-triton/nv_docs/isa-cn/
+```
+
+> 如果上方链接打不开，说明仓库 owner 还未在 GitHub 网页开启 Pages（见下方「开启 GitHub Pages」）。
+
+### 开启 GitHub Pages（仓库 owner 操作，只需一次）
+
+1. 打开 https://github.com/LeoYangXY/learn-cuda-cute-triton → **Settings** → **Pages**
+2. **Source** 选择 `Deploy from a branch`
+3. **Branch** 选择 `master`，目录选 `/ (root)`
+4. 点击 **Save**
+
+等待 1~2 分钟，访问上面的链接即可。之后每次 push 新内容，Pages 会自动更新。
+
+## 本地查看（备选）
+
+直接用浏览器打开 `index.html` 即可（或部署到任意静态服务器）。
 
 如果本地查看图片/样式有问题，可在本目录起一个静态服务器：
 
