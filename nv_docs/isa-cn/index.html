@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NVIDIA PTX ISA 中文翻译（对照 CUDA 背景改写）</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --card: #1a2029;
+    --border: #2d3748;
+    --accent: #76b900;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 40px 20px;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  header { text-align: center; margin-bottom: 16px; }
+  h1 { font-size: 1.9em; color: var(--accent); margin-bottom: 12px; }
+  .sub { color: var(--muted); font-size: 0.95em; }
+  .hint {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 24px 0 32px;
+    font-size: 0.92em;
+    color: var(--muted);
+  }
+  .hint strong { color: var(--text); }
+  ol.toc { list-style: none; counter-reset: ch; }
+  ol.toc li {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-bottom: 12px;
+    transition: border-color .2s, transform .2s;
+  }
+  ol.toc li:hover { border-color: var(--accent); transform: translateX(4px); }
+  ol.toc li a {
+    text-decoration: none;
+    color: var(--text);
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  .num {
+    counter-increment: ch;
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 1.3em;
+    min-width: 2.2em;
+  }
+  .num::before { content: counter(ch) ". "; }
+  .title-cn { font-weight: 600; }
+  .title-en { color: var(--muted); font-size: 0.85em; }
+  .desc { display: block; color: var(--muted); font-size: 0.88em; margin-top: 4px; padding-left: calc(2.2em + 12px); }
+  footer { text-align: center; color: var(--muted); font-size: 0.82em; margin-top: 36px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>NVIDIA PTX ISA 中文翻译（对照 CUDA 背景改写）</h1>
+    <p class="sub">本文档由 AI 对照 NVIDIA 官方 Parallel Thread Execution ISA 文档翻译，每个章节为独立 HTML 文件。</p>
+  </header>
+
+  <div class="hint">
+    <strong>如何使用：</strong>建议从第 1 章开始顺序阅读，以建立完整的 PTX 心智模型；<strong>第 9 章指令集</strong>内容庞大，可当作参考手册随时查阅，不必通读。
+  </div>
+
+  <ol class="toc">
+    <li><a href="chapter1.html"><span class="num"></span><span><span class="title-cn">第1章 Introduction（简介）</span> <span class="title-en">Introduction</span><span class="desc">介绍 PTX 的作用、定位及其在 CUDA 编程体系中的角色。</span></span></a></li>
+    <li><a href="chapter2.html"><span class="num"></span><span><span class="title-cn">第2章 Programming Model（编程模型）</span> <span class="title-en">Programming Model</span><span class="desc">讲解线程层级、网格/块结构与 CUDA 执行模型。</span></span></a></li>
+    <li><a href="chapter3.html"><span class="num"></span><span><span class="title-cn">第3章 PTX Machine Model（PTX 机器模型）</span> <span class="title-en">PTX Machine Model</span><span class="desc">描述 PTX 抽象虚拟机的寄存器与存储架构。</span></span></a></li>
+    <li><a href="chapter4.html"><span class="num"></span><span><span class="title-cn">第4章 Syntax（语法）</span> <span class="title-en">Syntax</span><span class="desc">说明 PTX 源文件的词法、注释与语句格式。</span></span></a></li>
+    <li><a href="chapter5.html"><span class="num"></span><span><span class="title-cn">第5章 State Spaces, Types, and Variables（状态空间、类型、变量）</span> <span class="title-en">State Spaces, Types, and Variables</span><span class="desc">定义内存状态空间、数据类型与变量声明规则。</span></span></a></li>
+    <li><a href="chapter6.html"><span class="num"></span><span><span class="title-cn">第6章 Instruction Operands（指令操作数）</span> <span class="title-en">Instruction Operands</span><span class="desc">说明操作数形式、修饰符与寻址模式。</span></span></a></li>
+    <li><a href="chapter7.html"><span class="num"></span><span><span class="title-cn">第7章 Abstracting the ABI（ABI 抽象）</span> <span class="title-en">Abstracting the ABI</span><span class="desc">介绍 PTX 对应用二进制接口的抽象约定。</span></span></a></li>
+    <li><a href="chapter8.html"><span class="num"></span><span><span class="title-cn">第8章 Memory Consistency Model（内存一致性模型）</span> <span class="title-en">Memory Consistency Model</span><span class="desc">阐述线程间内存可见性与同步语义。</span></span></a></li>
+    <li><a href="chapter9.html"><span class="num"></span><span><span class="title-cn">第9章 Instruction Set（指令集）</span> <span class="title-en">Instruction Set</span><span class="desc">完整列出并描述全部 PTX 指令，可当参考手册。</span></span></a></li>
+    <li><a href="chapter10.html"><span class="num"></span><span><span class="title-cn">第10章 Special Registers（特殊寄存器）</span> <span class="title-en">Special Registers</span><span class="desc">列举线程 ID、块维度等只读特殊寄存器。</span></span></a></li>
+    <li><a href="chapter11.html"><span class="num"></span><span><span class="title-cn">第11章 Directives（伪指令）</span> <span class="title-en">Directives</span><span class="desc">说明编译期伪指令（如 .global、.func）的用法。</span></span></a></li>
+    <li><a href="chapter12.html"><span class="num"></span><span><span class="title-cn">第12章 Descriptions of .pragma Strings（.pragma 字符串说明）</span> <span class="title-en">Descriptions of .pragma Strings</span><span class="desc">解释 .pragma 控制字符串的含义与格式。</span></span></a></li>
+    <li><a href="chapter13.html"><span class="num"></span><span><span class="title-cn">第13章 Release Notes（发行说明）</span> <span class="title-en">Release Notes</span><span class="desc">记录各版本 PTX ISA 的变更与新增特性。</span></span></a></li>
+    <li><a href="chapter14.html"><span class="num"></span><span><span class="title-cn">第14章 Notices（声明）</span> <span class="title-en">Notices</span><span class="desc">包含版权、商标与法律免责声明。</span></span></a></li>
+  </ol>
+
+  <footer>NVIDIA PTX ISA 中文翻译 · 对照官方文档由 AI 生成</footer>
+</div>
+</body>
+</html>

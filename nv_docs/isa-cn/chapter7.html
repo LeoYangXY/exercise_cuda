@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PTX ISA 第7章 Abstracting the ABI（中文翻译）</title>
+<style>
+body{font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;max-width:960px;margin:0 auto;padding:24px;line-height:1.75;color:#1a1a1a;}
+h1{font-size:1.9em;border-bottom:3px solid #76b900;padding-bottom:.3em;color:#263d00;}
+h2{font-size:1.5em;margin-top:1.8em;border-left:5px solid #76b900;padding-left:.4em;color:#2f4a00;}
+h3{font-size:1.2em;margin-top:1.4em;color:#374c00;}
+table{border-collapse:collapse;width:100%;margin:1em 0;font-size:.92em;}
+th,td{border:1px solid #ccc;padding:6px 9px;text-align:left;vertical-align:top;}
+th{background:#eef6e0;}
+code{font-family:"SFMono-Regular",Consolas,monospace;background:#f3f3f3;padding:1px 4px;border-radius:3px;font-size:.9em;}
+pre{background:#0d1117;color:#e6edf3;padding:14px;border-radius:8px;overflow-x:auto;font-size:.86em;line-height:1.45;}
+pre code{background:none;color:inherit;padding:0;}
+.cn-note{background:#fff8e1;border:1px solid #ffe082;padding:12px 16px;border-radius:8px;margin:14px 0;font-size:.92em;}
+.cn-lead{background:#eef7e3;border-left:4px solid #76b900;padding:10px 14px;margin:10px 0;border-radius:0 6px 6px 0;font-size:.94em;}
+.term{background:#eaf3ff;border-bottom:1px dotted #4a90d9;padding:0 2px;}
+.footer{margin-top:40px;padding-top:14px;border-top:1px solid #ddd;color:#888;font-size:.85em;}
+</style>
+</head>
+<body>
+
+<div class="cn-note">
+本页由 AI 对照 NVIDIA 官方 PTX ISA 文档翻译，结合 CUDA 背景改写，仅供参考。<br>
+术语对照（首次出现均附英文与注释）：
+<b>ABI</b>（Application Binary Interface，应用二进制接口）——规定函数调用时参数与返回值如何在寄存器/栈上传递、栈帧如何布局；
+<b>calling convention</b>（调用约定）——某具体硬件/编译器约定的传参与返回值规则；
+<b>param</b>（参数，PTX 中通过 <code>.param</code> state space 传递 kernel/函数参数）；
+<b>state space</b>（状态空间）——PTX 中变量所处地址空间的抽象（如 <code>.reg</code> 寄存器、<code>.param</code> 参数、<code>.local</code> 局部/栈）；
+<b>alloca</b>——PTX 在每线程局部栈上运行时分配内存的指令。
+</div>
+
+<h1>7. 抽象化 ABI（Abstracting the ABI）</h1>
+
+<p>PTX 没有把某个具体的<span class="term">调用约定（calling convention）</span>、栈布局或<span class="term">应用二进制接口（ABI，Application Binary Interface）</span>的细节直接暴露给编写者，而是提供了一层略高级的抽象，并支持多种不同的 ABI 实现。本节描述 PTX 为实现这种"对 ABI 的隐藏"所需要的特性，包括：函数定义的语法、函数调用的语法、参数传递方式，以及在栈上分配内存的 <code>alloca</code> 指令。</p>
+
+<p>关于如何生成符合 CUDA® 架构 ABI 的 PTX，请参阅 <em>PTX Writers Guide to Interoperability</em>（PTX 互操作性编写指南）。</p>
+
+<div class="cn-lead">
+<b>【译】</b>为什么需要"抽象 ABI"？在普通 CPU 汇编里，调用一个函数意味着你要把参数塞进约定好的寄存器（如 x86-64 的 RDI/RSI…）或压栈，并遵守调用者/被调用者保存寄存器的分工。但 GPU 的硬件（不同 compute capability、不同代际）这些约定各异。PTX 作为"虚拟汇编"不绑定具体硬件：它用 <code>.func</code> 声明函数、用 <code>.param</code>/<code>.reg</code> 抽象参数，把"参数到底放进物理寄存器还是栈"这个决定推迟到 ptxas（PTX 后端编译器）针对目标架构生成机器码时再做。这样同一份 PTX 源可在多代 GPU 上可移植。这正是"Abstracting the ABI"的含义。
+</div>
+
+<h2>7.1 函数声明与定义（Function Declarations and Definitions）</h2>
+
+<p>在 PTX 中，函数使用 <code>.func</code> 指令来声明（declare）和定义（define）。函数的<b>声明</b>给出可选的返回参数列表、函数名，以及可选的输入参数列表；三者合起来描述了函数的接口，或称函数原型（prototype）。函数的<b>定义</b>则同时给出接口与函数体。一个函数在被调用之前必须先声明或定义。</p>
+
+<p>最简单的函数既没有参数也没有返回值，在 PTX 中写作如下形式：</p>
+
+<pre><code>.func foo
+{
+    ...
+    ret;          // 返回指令
+}
+
+    ...
+    call foo;     // 调用指令
+    ...
+</code></pre>
+
+<p>这里，执行 <code>call</code> 指令会把控制权转移到 <code>foo</code>，并隐式保存返回地址。执行 <code>foo</code> 内部的 <code>ret</code> 指令则把控制权交还给 <code>call</code> 之后的那条指令。</p>
+
+<p>标量（scalar）与向量（vector）基础类型的输入参数和返回参数，都可以简单地用寄存器变量来表示。在调用处，实参（argument）可以是寄存器变量或常量，返回值也可以直接放入寄存器变量。调用处所用的实参与返回变量，其类型与大小必须与被调用函数对应的形参（formal parameter）相匹配。</p>
+
+<p><b>示例</b></p>
+
+<pre><code>.func (.reg .u32 %res) inc_ptr ( .reg .u32 %ptr, .reg .u32 %inc )
+{
+    add.u32 %res, %ptr, %inc;   // res = ptr + inc
+    ret;
+}
+
+    ...
+    call (%r1), inc_ptr, (%r1,4);   // 以 %r1 为实参、4 为增量调用，结果写回 %r1
+    ...
+</code></pre>
+
+<p>在使用 ABI 时，<code>.reg</code> 状态空间中的参数大小必须至少为 32 位。源语言中小于一个字的标量对象（sub-word scalar），在 PTX 中应当被提升（promote）为 32 位寄存器，或者改用下面要介绍的 <code>.param</code> 状态空间字节数组。</p>
+
+<p>像 C 语言的结构体（struct）和联合体（union）这类对象，在 PTX 中会被"扁平化（flatten）"为寄存器或字节数组，并用 <code>.param</code> 空间内存来表示。例如，考虑下面这个按值传给函数的 C 结构体：</p>
+
+<pre><code>struct {
+    double dbl;
+    char   c[4];
+};
+</code></pre>
+
+<p>在 PTX 中，这个结构体将被扁平化为一个字节数组。由于内存访问必须按访问大小的倍数对齐，本例中的结构体将是一个 12 字节、按 8 字节对齐的数组，以保证对 <code>.f64</code> 字段的访问是对齐的。<code>.param</code> 状态空间用于按值传递该结构体：</p>
+
+<p><b>示例</b></p>
+
+<pre><code>.func (.reg .s32 out) bar (.reg .s32 x, .param .align 8 .b8 y[12])
+{
+    .reg .f64 f1;
+    .reg .b32 c1, c2, c3, c4;
+    ...
+    ld.param.f64 f1, [y+0];    // 从参数 y 偏移 0 处加载 double 字段
+    ld.param.b8  c1, [y+8];    // 加载 char 数组第 1 字节
+    ld.param.b8  c2, [y+9];
+    ld.param.b8  c3, [y+10];
+    ld.param.b8  c4, [y+11];
+    ...
+    ... // 使用 x,f1,c1,c2,c3,c4 进行计算
+}
+
+{
+     .param .b8 .align 8 py[12];   // 调用者在本地声明一个 .param 字节数组
+     ...
+     st.param.b64 [py+ 0], %rd;    // 把 double 字段写入参数数组
+     st.param.b8  [py+ 8], %rc1;
+     st.param.b8  [py+ 9], %rc2;
+     st.param.b8  [py+10], %rc1;
+     st.param.b8  [py+11], %rc2;
+     // 标量实参放在 .reg 空间，字节数组实参放在 .param 空间
+     call (%out), bar, (%x, py);   // 调用 bar：%x 为 .reg 实参，py 为 .param 实参
+     ...
+}
+</code></pre>
+
+<p>在此例中要注意，<code>.param</code> 空间变量有两种用法。其一，函数定义 <code>bar</code> 中的 <code>.param</code> 变量 <code>y</code> 用来表示形参；其二，调用函数体内声明的 <code>.param</code> 变量 <code>py</code> 用于组装要传给 <code>bar</code> 的结构体。</p>
+
+<p>下面这种概念模型有助于理解设备函数中 <code>.param</code> 状态空间的用途。</p>
+
+<p><b>对调用者（caller）而言：</b></p>
+<ul>
+<li><code>.param</code> 状态空间用于设置将要传给被调用函数的值，和/或接收来自被调用函数的返回值。通常，一个 <code>.param</code> 字节数组用来把按值传递的结构体的各个字段聚合到一起。</li>
+</ul>
+
+<p><b>对被调用者（callee）而言：</b></p>
+<ul>
+<li><code>.param</code> 状态空间用于接收参数值，和/或将返回值传回给调用者。</li>
+</ul>
+
+<p>参数传递须遵循以下限制。</p>
+
+<p><b>对调用者：</b></p>
+<ul>
+<li>实参可以是 <code>.param</code> 变量、<code>.reg</code> 变量或常量。</li>
+<li>若形参为字节数组形式的 <code>.param</code> 空间变量，则实参也必须是类型、大小、对齐方式都匹配的 <code>.param</code> 空间字节数组。该 <code>.param</code> 实参必须在调用者的局部作用域内声明。</li>
+<li>若形参为基础类型的标量或向量形式的 <code>.param</code> 空间变量，则对应实参可以是类型与大小匹配的 <code>.param</code> 或 <code>.reg</code> 空间变量，也可以是能用该形参类型表示的常量。</li>
+<li>若形参为 <code>.reg</code> 空间变量，则对应实参可以是类型与大小匹配的 <code>.param</code> 或 <code>.reg</code> 空间变量，也可以是能用该形参类型表示的常量。</li>
+<li>若形参为 <code>.reg</code> 空间变量，该寄存器大小必须至少为 32 位。</li>
+<li>所有用于传参的 <code>st.param</code> 指令必须紧挨在对应的 <code>call</code> 指令之前；用于取返回值的 <code>ld.param</code> 指令必须紧挨在 <code>call</code> 指令之后，且中间不能有控制流改变。用于传参的 <code>st.param</code> 和 <code>ld.param</code> 指令不能被谓词（predicate）化。这样做是为了让编译器可以优化，并确保 <code>.param</code> 变量不会在调用者栈帧中额外占用超出 ABI 所需之外的空间。<code>.param</code> 变量只是提供了一个映射：把调用处可能分散在多处的数据（例如调用者正在用寄存器和内存共同操作的一个结构体）映射到可以作为一个参数/返回值传给被调用者的形式。</li>
+</ul>
+
+<p><b>对被调用者：</b></p>
+<ul>
+<li>输入参数和返回参数可以是 <code>.param</code> 变量或 <code>.reg</code> 变量。</li>
+<li><code>.param</code> 内存中的参数必须按 1、2、4、8 或 16 字节的倍数对齐。</li>
+<li><code>.reg</code> 状态空间中的参数大小必须至少为 32 位。</li>
+<li>在非 ABI 模式下编译时，<code>.reg</code> 状态空间可用于接收和返回基础类型的标量及向量值（包括小于字的对象）。支持 <code>.reg</code> 状态空间是为了兼容旧代码（legacy support）。</li>
+</ul>
+
+<p>请注意：选用 <code>.reg</code> 还是 <code>.param</code> 状态空间来传递参数，并不影响该参数最终到底是落在物理寄存器上还是栈上。参数到物理寄存器与栈位置的映射，取决于 ABI 的定义以及参数的顺序、大小和对齐方式。</p>
+
+<div class="cn-lead">
+<b>【译】</b>这一段是关键的可移植性要点：你在 PTX 源码里写的是抽象的参数声明（<code>.reg</code> 或 <code>.param</code>），而真正"参数进寄存器 R0/R1…还是压栈、栈帧长什么样"由 ptxas 在针对具体 sm_xx 生成 SASS（机器码）时，依据该架构的 ABI 决定。所以同一份 PTX 在 sm_70、sm_80、sm_90 上会生成不同的实际调用序列，但语义一致。
+</div>
+
+<h3>7.1.1 与 PTX ISA 1.x 版本的变更（Changes from PTX ISA Version 1.x）</h3>
+
+<p>在 PTX ISA 1.x 版本中，形参被限制在 <code>.reg</code> 状态空间，且不支持数组形参。像 C 结构体这样的对象会被扁平化，并用多个寄存器来传递或返回。为此，PTX ISA 1.x 支持多返回值（multiple return values）。</p>
+
+<p>从 PTX ISA 2.0 版本开始，形参可以位于 <code>.reg</code> 或 <code>.param</code> 状态空间，并且 <code>.param</code> 空间形参支持数组。对于 <code>sm_20</code> 及更高目标架构，PTX 将函数限制为单一返回值，对于无法放入单个寄存器的对象，应当使用 <code>.param</code> 字节数组来返回。PTX 仍对 <code>sm_1x</code> 目标架构保留多返回寄存器的支持。</p>
+
+<div class="cn-lead">
+<b>注意</b>：PTX 仅在 <code>sm_20</code> 及更高目标架构上实现基于栈的 ABI。
+</div>
+
+<p>PTX ISA 3.0 之前的版本允许在模块作用域（module scope）定义 <code>.reg</code> 和 <code>.local</code> 状态空间的变量。当以使用 ABI 的方式编译时，PTX ISA 3.0 及之后版本禁止模块作用域的 <code>.reg</code> 和 <code>.local</code> 变量，将它们限制到函数作用域内使用。在不使用 ABI 编译时，模块作用域的 <code>.reg</code> 和 <code>.local</code> 变量仍按原先方式支持。当编译包含模块作用域 <code>.reg</code> 或 <code>.local</code> 变量的旧版 PTX 代码（ISA 3.0 之前）时，编译器会静默地禁用 ABI 的使用。</p>
+
+<h2>7.2 可变参数函数（Variadic Functions）</h2>
+
+<div class="cn-lead">
+<b>注意</b>：规范中原本"未实现的可变参数函数支持"已被移除。
+</div>
+
+<p>PTX 6.0 版本支持将无尺寸（unsized）数组参数传给函数，可借此实现可变参数函数。</p>
+
+<p>详见 <a href="https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#kernel-and-function-directives-func">Kernel and Function Directives: .func</a>。</p>
+
+<h2>7.3 Alloca</h2>
+
+<p>PTX 提供 <code>alloca</code> 指令，用于在每个线程的局部内存栈（per-thread local memory stack）上运行时分配存储。分配得到的栈内存可通过 <code>ld.local</code> 和 <code>st.local</code> 指令、使用 <code>alloca</code> 返回的指针进行访问。</p>
+
+<p>为便于释放由 <code>alloca</code> 分配的内存，PTX 另提供两条指令：<code>stacksave</code> 可将栈指针的当前值读入一个局部变量；<code>stackrestore</code> 可用保存的值恢复栈指针。</p>
+
+<p><code>alloca</code>、<code>stacksave</code> 与 <code>stackrestore</code> 指令详见 <a href="https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#stack-manipulation-instructions">Stack Manipulation Instructions（栈操作指令）</a>。</p>
+
+<div class="cn-lead">
+<b>【译】</b><code>alloca</code> 相当于 CUDA C++ 里的"在栈上动态分配"（类似 C 的 <code>alloca</code> 而非 <code>malloc</code>）：它不会在堆上分配、也无需手动 free，而是直接抬高栈指针，离开作用域时用 <code>stackrestore</code> 把栈指针复原即可。典型用途是函数内大小运行期才确定的局部缓冲区。注意它与 host 端 <code>malloc</code> 不同——这块内存位于 GPU 每线程局部栈，容量受限于栈大小。
+</div>
+
+<div class="footer">
+本页由 AI 对照 NVIDIA 官方 PTX ISA 文档翻译，结合 CUDA 背景改写，仅供参考。原文：https://docs.nvidia.com/cuda/parallel-thread-execution/index.html （第 7 章 Abstracting the ABI）。
+</div>
+
+</body>
+</html>

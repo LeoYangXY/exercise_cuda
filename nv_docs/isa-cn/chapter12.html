@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 12 章 .pragma 字符串说明（PTX ISA 中文翻译）</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    line-height: 1.75;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+    color: #1f2328;
+    background: #fff;
+  }
+  .disclaimer {
+    background: #fff8e1;
+    border: 1px solid #ffe08a;
+    border-radius: 8px;
+    padding: 0.75rem 1.1rem;
+    font-size: 0.9rem;
+    color: #8a6d00;
+    margin-bottom: 2rem;
+  }
+  h1 { font-size: 1.9rem; border-bottom: 3px solid #76b900; padding-bottom: 0.5rem; }
+  h2 { font-size: 1.45rem; margin-top: 2.5rem; border-left: 5px solid #76b900; padding-left: 0.7rem; }
+  h3 { font-size: 1.15rem; margin-top: 1.8rem; color: #4a4a4a; }
+  code { background: #f3f4f6; padding: 0.1em 0.4em; border-radius: 4px; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 0.9em; }
+  pre {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 1rem 1.2rem;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 0.86rem;
+    line-height: 1.5;
+  }
+  pre code { background: none; color: inherit; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1.2rem 0; font-size: 0.92rem; }
+  th, td { border: 1px solid #d0d7de; padding: 0.55rem 0.8rem; text-align: left; vertical-align: top; }
+  th { background: #f0f3f0; }
+  .term { color: #76b900; font-weight: 600; }
+  .note {
+    background: #e7f3ff;
+    border-left: 4px solid #2196f3;
+    padding: 0.7rem 1rem;
+    margin: 1.2rem 0;
+    border-radius: 4px;
+    font-size: 0.92rem;
+  }
+  .meta { font-size: 0.85rem; color: #888; margin: 0.4rem 0 1rem; }
+  blockquote { border-left: 4px solid #ccc; margin: 1rem 0; padding: 0.4rem 1rem; color: #555; }
+  hr { border: none; border-top: 1px solid #eee; margin: 2rem 0; }
+  a { color: #1565c0; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .toc { background: #f8faf8; border: 1px solid #e0e8e0; border-radius: 8px; padding: 1rem 1.4rem; margin: 1.5rem 0; }
+  .toc ul { margin: 0.3rem 0; padding-left: 1.4rem; }
+</style>
+</head>
+<body>
+
+<div class="disclaimer">
+  本页由 AI 对照 NVIDIA 官方 PTX ISA 文档翻译，结合 CUDA 背景改写，仅供参考。
+  原文来源：<a href="https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#descriptions-of-pragma-strings">NVIDIA PTX ISA — Descriptions of .pragma Strings</a>。
+  术语首现时标注英文及 CUDA 背景说明。
+</div>
+
+<h1>第 12 章 .pragma 字符串说明</h1>
+
+<p>本章描述由 <span class="term">ptxas</span>（PTX 汇编器，即 NVIDIA 的 PTX→SASS 后端编译器）定义的 <code>.pragma</code> 字符串。
+<span class="term">.pragma</span>（给 PTX 汇编器/编译器的提示伪指令，类似编译器 pragma）用于向优化后端传递无法用普通 PTX 指令表达的“提示（hint）”，
+例如是否展开循环、寄存器溢出到何处、基本块执行频率等。这些提示通常只影响后端优化决策，不改变程序的语义正确性。</p>
+
+<p>在 CUDA 编程语境下，<code>.pragma</code> 出现在 <code>.ptx</code> 汇编层面；普通 CUDA C++ 开发者通常通过 <code>#pragma unroll</code> 等高级写法，
+经 <code>nvcc</code> 编译后最终被翻译成等价的底层提示。理解本章有助于在需要手写或精调 PTX、定位性能问题时，精确控制后端行为。</p>
+
+<div class="toc">
+<strong>本章目录</strong>
+<ul>
+  <li><a href="#s12-1">12.1 Pragma 字符串："nounroll"（禁止循环展开）</a></li>
+  <li><a href="#s12-2">12.2 Pragma 字符串："used_bytes_mask"（加载已用字节掩码）</a></li>
+  <li><a href="#s12-3">12.3 Pragma 字符串："enable_smem_spilling"（启用共享内存溢出）</a></li>
+  <li><a href="#s12-4">12.4 Pragma 字符串："frequency"（基本块执行频率）</a></li>
+</ul>
+</div>
+
+<!-- ============ 12.1 ============ -->
+<h2 id="s12-1">12.1 Pragma 字符串："nounroll"</h2>
+<p><strong><code>"nounroll"</code></strong></p>
+<p>在优化后端编译器中<strong>禁止循环展开</strong>（unroll，即把循环体复制多份以消除循环控制开销的优化）。</p>
+
+<h3>语法</h3>
+<pre><code>.pragma "nounroll";</code></pre>
+
+<h3>说明</h3>
+<p><code>"nounroll"</code> pragma 是一条用于禁止优化后端编译器进行循环展开的指令。</p>
+<p><code>"nounroll"</code> pragma 可在<strong>模块（module）</strong>、<strong>入口函数（entry-function）</strong>和<strong>语句（statement）</strong>三个层级使用，含义如下：</p>
+<table>
+  <tr><th>作用域</th><th>含义</th></tr>
+  <tr>
+    <td><strong>模块作用域</strong><br>（module scope）</td>
+    <td>禁止展开模块内所有循环，包括出现在该 <code>.pragma</code> 之前的循环。</td>
+  </tr>
+  <tr>
+    <td><strong>入口函数作用域</strong><br>（entry-function scope）</td>
+    <td>禁止展开该入口函数体（kernel 函数体）内的所有循环。</td>
+  </tr>
+  <tr>
+    <td><strong>语句级 pragma</strong><br>（statement-level pragma）</td>
+    <td>禁止展开“当前基本块恰好是循环头（loop header）”的那个循环。</td>
+  </tr>
+</table>
+
+<p class="meta"><strong>CUDA 背景：</strong>循环展开通常能减少分支、提升 ILP（指令级并行）并隐藏延迟，但会增加寄存器占用。当 kernel 受寄存器数量限制（register-bound）时，过度展开会触发寄存器溢出（spill）到本地内存，反而变慢；此时 <code>nounroll</code> 可用于抑制展开。</p>
+
+<p>注意：为了让语句级 pragma 生效，<code>"nounroll"</code> 指令必须出现在<strong>所需循环头基本块</strong>中、位于任何指令语句之前。循环头基本块（loop header block）的定义是：支配（dominate）循环体内所有基本块、且是循环回边（backedge）跳转目标的基本块。出现在循环头基本块之外的语句级 <code>"nounroll"</code> 指令会被静默忽略。</p>
+
+<h3>PTX ISA 版本说明</h3>
+<p>于 PTX ISA 2.0 引入。</p>
+
+<h3>目标 ISA 说明</h3>
+<p>需要 <code>sm_20</code> 或更高版本。对 <code>sm_1x</code> 目标会被忽略。</p>
+
+<h3>示例</h3>
+<pre><code>.entry foo (...)
+.pragma "nounroll";  // 本函数内不展开任何循环
+{
+...
+}
+
+.func bar (...)
+{
+...
+L1_head:
+     .pragma "nounroll";  // 不展开这个循环
+     ...
+@p   bra L1_end;
+L1_body:
+     ...
+L1_continue:
+     bra L1_head;
+L1_end:
+     ...
+}</code></pre>
+
+<!-- ============ 12.2 ============ -->
+<h2 id="s12-2">12.2 Pragma 字符串："used_bytes_mask"</h2>
+<p><strong><code>"used_bytes_mask"</code></strong></p>
+<p>用于指示加载（ld）操作数据中被实际使用的字节的掩码（mask）。</p>
+
+<h3>语法</h3>
+<pre><code>.pragma "used_bytes_mask mask";</code></pre>
+
+<h3>说明</h3>
+<p><code>"used_bytes_mask"</code> pragma 是一条指令，用于根据所提供的掩码指明某次加载操作中“被使用”的字节。
+<code>"used_bytes_mask"</code> pragma 必须出现在<strong>需要标注“从加载操作中使用了哪些字节”的那条加载指令之前</strong>。
+如果其后跟随的不是加载指令，该 pragma 会被忽略。</p>
+<p>对于没有此 pragma 的加载指令，编译器默认认为加载操作中<strong>所有字节都被使用</strong>。</p>
+<p>操作数 <code>mask</code> 是一个 32 位整数，其置 1 的位表示加载数据中“被使用”的字节。</p>
+
+<h3>语义</h3>
+<pre><code>mask 操作数中的每一位对应一个字节数据，置 1 的位表示该字节被使用。
+最高位（most-significant bit）对应数据的最高字节。
+
+// 4 字节加载，仅低 3 字节被使用
+.pragma "used_bytes_mask 0x7";
+ld.global.u32 %r0, [gbl];     // %r0 的高 1 字节未被使用
+
+// 16 字节向量加载，低 12 字节被使用
+.pragma "used_bytes_mask 0xfff";
+ld.global.v4.u32 {%r0, %r1, %r2, %r3}, [gbl];  // %r3 未被使用</code></pre>
+
+<p class="meta"><strong>CUDA 背景：</strong>后端可据此对未使用的字节做消除/优化（例如避免无谓的依赖、减少实际访问宽度），从而改善生成的 SASS。该提示不会影响程序结果，只影响后端对“哪些是死字节”的判断。</p>
+
+<h3>PTX ISA 版本说明</h3>
+<p>于 PTX ISA 8.3 引入。</p>
+
+<h3>目标 ISA 说明</h3>
+<p>需要 <code>sm_50</code> 或更高版本。</p>
+
+<h3>示例</h3>
+<pre><code>.pragma "used_bytes_mask 0xfff";
+ld.global.v4.u32 {%r0, %r1, %r2, %r3}, [gbl]; // 仅低 12 字节被使用</code></pre>
+
+<!-- ============ 12.3 ============ -->
+<h2 id="s12-3">12.3 Pragma 字符串："enable_smem_spilling"</h2>
+<p><strong><code>"enable_smem_spilling"</code></strong></p>
+<p>为 CUDA kernel 启用<strong>共享内存溢出（shared memory spilling）</strong>。</p>
+
+<h3>语法</h3>
+<pre><code>.pragma "enable_smem_spilling";</code></pre>
+
+<h3>说明</h3>
+<p><code>"enable_smem_spilling"</code> pragma 是一条指令，用于启用把寄存器溢出（register spilling）到共享内存。
+在溢出过程中，寄存器<strong>首先</strong>被溢出到共享内存；一旦分配的共享内存用满，额外的溢出会被重定向到本地内存（local memory）。
+由于共享内存访问比本地内存更快，这可以降低内存访问延迟从而提升性能。</p>
+
+<p><code>"enable_smem_spilling"</code> pragma <strong>仅允许在函数作用域（function scope）内使用</strong>。应用后，它为指定函数启用共享内存溢出。</p>
+
+<p class="meta"><strong>CUDA 背景：</strong>当 kernel 寄存器不足时，ptxas 会把“溢出”的寄存器写入本地内存（实际位于全局/显存的 L1/L2 缓存之外，延迟高）。启用共享内存溢出可把这部分写入改为延迟更低的共享内存，常用于寄存器紧张又追求性能的 kernel。但它会占用共享内存配额，可能限制可同时运行的 block（CTA）数量。</p>
+
+<p>该 pragma 的使用仅在<strong>某些特定场景和编译模式下有效</strong>。在以下情况下<strong>禁止使用</strong>该 pragma，并可能导致报错：</p>
+<ul>
+  <li>逐函数编译模式（per-function compilation）：例如分离编译（Separate Compilation）、设备调试（Device-debug）、含递归函数调用的全程序编译（Whole program with recursive function calls）、可扩展全程序（Extensible-whole-program）；</li>
+  <li>使用了动态分配共享内存的 kernel；</li>
+  <li>使用了 <code>setmaxnreg</code> 指令的 kernel。</li>
+</ul>
+
+<div class="note">
+<strong>注意</strong>
+<p>如果未显式指定 launch bounds（启动配置，如 <code>__launch_bounds__</code>），编译器会假设每个 CTA 使用最大可能的线程数，用以估算每 CTA 分配的共享内存及相应的溢出大小。然而，如果 kernel 实际启动时每 CTA 的线程数少于估算值，每 CTA 分配的共享内存可能超过编译器估算值，从而潜在地限制可在 SM 上启动的 CTA 数量。因此，<strong>未指定 launch bounds 而使用该 pragma 可能导致性能回退。建议仅在显式指定 launch bounds 时才使用此 pragma。</strong></p>
+</div>
+
+<h3>PTX ISA 版本说明</h3>
+<p>于 PTX ISA 9.0 引入。</p>
+
+<h3>目标 ISA 说明</h3>
+<p>需要 <code>sm_75</code> 或更高版本。</p>
+
+<h3>示例</h3>
+<pre><code>.entry foo (...)
+{
+    ...
+    .pragma "enable_smem_spilling";   // 为本函数启用共享内存溢出
+    ...
+}</code></pre>
+
+<!-- ============ 12.4 ============ -->
+<h2 id="s12-4">12.4 Pragma 字符串："frequency"</h2>
+<p><strong><code>"frequency"</code></strong></p>
+<p>指定基本块（basic block）的执行频率。</p>
+
+<h3>语法</h3>
+<pre><code>.pragma "frequency n";</code></pre>
+
+<h3>说明</h3>
+<p><code>"frequency"</code> pragma 是一条指令，用于指定某基本块被执行线程执行的次数。优化编译器后端将此 pragma 视为一个用于优化的<strong>提示（hint）</strong>。</p>
+<p>操作数 <code>n</code> 是一个 64 位非负整数常量，表示执行频率。</p>
+
+<p class="meta"><strong>CUDA 背景：</strong>基本块执行频率是后端做布局（code layout）、寄存器分配优先级、分支预测与冷热代码分离等优化的重要依据。冷路径（frequency 低）可被放到次要位置以减少指令缓存压力。注意这只是 hint，后端可能因其他约束而偏离。</p>
+
+<p>注意：为使该 pragma 达到预期效果，它应出现在<strong>基本块起始处</strong>。基本块定义为：仅有一个入口点和一个出口点的直线型（straight-line）指令序列。</p>
+
+<h3>PTX ISA 版本说明</h3>
+<p>于 PTX ISA 9.0 引入。</p>
+
+<h3>目标 ISA 说明</h3>
+<p>所有目标架构均支持。</p>
+
+<h3>示例</h3>
+<pre><code>.entry foo (...)
+{
+    .pragma "frequency 32";
+    ...
+}</code></pre>
+
+<hr>
+<p class="meta">译注：本章为 NVIDIA PTX ISA 9.3 文档第 12 章。当前版本共记录 4 个 <code>.pragma</code> 字符串：<code>nounroll</code>、<code>used_bytes_mask</code>、<code>enable_smem_spilling</code>、<code>frequency</code>。在 PTX ISA 9.3 的“新特性”中另提及 <code>mma_throughput</code> pragma，但其详细说明不在本章范围内。翻译若有出入，请以官方英文原文为准。</p>
+
+</body>
+</html>

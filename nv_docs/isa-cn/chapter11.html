@@ -1,0 +1,1790 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PTX ISA 第 11 章 伪指令（Directives）中文翻译</title>
+
+<style>
+:root{--fg:#1a1a1a;--bg:#fff;--accent:#76b900;--code-bg:#f5f7f5;--tbl-bd:#ccc;--note:#5a6;}
+*{box-sizing:border-box;}
+body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.7;color:var(--fg);max-width:960px;margin:0 auto;padding:24px;background:var(--bg);}
+.banner{background:#f0f7e6;border-left:4px solid var(--accent);padding:10px 16px;margin:16px 0;font-size:14px;color:#444;}
+h1{font-size:30px;border-bottom:3px solid var(--accent);padding-bottom:10px;}
+h2{font-size:23px;margin-top:38px;border-bottom:1px solid #ddd;padding-bottom:6px;color:#2d4a00;}
+h3{font-size:19px;margin-top:28px;color:#3a5a00;}
+h2 code,h3 code{color:var(--accent);}
+p.rubric{font-weight:700;color:#3a5a00;margin:18px 0 4px;letter-spacing:.5px;}
+pre{background:var(--code-bg);border:1px solid #e0e6e0;border-radius:6px;padding:14px 16px;overflow:auto;font-size:13px;}
+code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;background:var(--code-bg);padding:1px 5px;border-radius:4px;color:#1f3d00;}
+pre code{background:none;padding:0;}
+table{border-collapse:collapse;margin:14px 0;width:100%;font-size:14px;}
+th,td{border:1px solid var(--tbl-bd);padding:7px 10px;text-align:left;}
+th{background:#eef5e6;}
+ul{margin:8px 0;}
+.tip{background:#eef5e6;border-radius:6px;padding:6px 12px;font-size:13px;color:#4a5a30;margin:8px 0;}
+</style>
+
+</head>
+<body>
+<h1>PTX ISA 第 11 章：伪指令（Directives）</h1>
+
+<div class="banner">本页由 AI 对照 NVIDIA 官方 PTX ISA 文档翻译，结合 CUDA 背景改写，仅供参考。</div>
+<div class="tip"><b>术语说明：</b>本章所谓 <b>directive（伪指令/指示符）</b>指以 “.” 开头的 PTX 声明，用于声明程序结构（模块版本、目标架构、kernel/函数入口、状态空间、链接属性等），本身不生成机器指令。关键伪指令首次出现时给出英文与用途注释：
+<ul>
+<li><code>.version</code>：声明 PTX 语言版本（每个模块开头必须有一条）。</li>
+<li><code>.target</code>：声明目标 sm 架构与平台选项（如 sm_90、debug）。</li>
+<li><code>.entry</code>：定义 kernel 入口（对应 CUDA <code>__global__</code> 函数）。</li>
+<li><code>.func</code>：定义设备函数（对应 CUDA <code>__device__</code> 函数）。</li>
+<li><code>.param</code>：函数参数所在的状态空间。</li>
+<li><code>.visible</code> / <code>.extern</code> / <code>.weak</code>：跨模块链接可见性。</li>
+<li><code>.shared</code> / <code>.global</code> / <code>.const</code> / <code>.reg</code>：状态空间（详见状态空间章节）。</li>
+</ul></div>
+
+</section>
+<section id="directives">
+<h1>
+Directives<a class="headerlink" href="#directives" title="Permalink to this headline"></a>
+</h1>
+<section id="ptx-module-directives">
+<h2>
+PTX Module Directives<a class="headerlink" href="#ptx-module-directives" title="Permalink to this headline"></a>
+</h2>
+<p>以下伪指令用于声明本模块中代码的 PTX ISA 版本、代码所面向的目标架构，以及 PTX 模块内地址的尺寸。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">.version</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.target</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.address_size</span></code></p></li>
+</ul>
+<section id="ptx-module-directives-version">
+<h3>
+<a class="reference internal" href="#ptx-module-directives-version">PTX Module Directives: <code class="docutils literal notranslate"><span class="pre">.version</span></code></a><a class="headerlink" href="#ptx-module-directives-version" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.version</span></code></p>
+<p>PTX ISA 版本号。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.version  major.minor    // major, minor are integers
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>指定 PTX 语言版本号。</p>
+<p>当 PTX 语言发生不兼容的变更（例如语法或语义的改变）时，主版本号（major）递增。PTX 编译器使用主版本号来保证遗留 PTX 代码能够正确执行。</p>
+<p>当 PTX 增加新特性时，次版本号（minor）递增。</p>
+<p class="rubric">语义</p>
+<p>表示本模块必须使用支持等于或高于该版本号的工具进行编译。</p>
+<p>每个 PTX 模块都必须以 .version 伪指令开头，且模块内其他任何位置都不允许再出现第二条 .version 伪指令。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 1.0 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>所有目标架构均支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.version 3.1
+.version 3.0
+.version 2.3
+</code></pre></div>
+</div>
+</section>
+<section id="ptx-module-directives-target">
+<h3>
+<a class="reference internal" href="#ptx-module-directives-target">PTX Module Directives: <code class="docutils literal notranslate"><span class="pre">.target</span></code></a><a class="headerlink" href="#ptx-module-directives-target" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.target</span></code></p>
+<p>架构与平台目标。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.target stringlist         // comma separated list of target specifiers
+string = { sm_120a, sm_120f, sm_120,          // sm_12x target architectures
+           sm_121a, sm_121f, sm_121,          // sm_12x target architectures
+           sm_110a, sm_110f, sm_110,          // sm_11x target architectures
+           sm_100a, sm_100f, sm_100,          // sm_10x target architectures
+           sm_101a, sm_101f, sm_101,          // sm_10x target architectures
+           sm_103a, sm_103f, sm_103           // sm_10x target architectures
+           sm_90a, sm_90,                     // sm_9x target architectures
+           sm_80, sm_86, sm_87, sm_88, sm_89, // sm_8x target architectures
+           sm_70, sm_72, sm_75,               // sm_7x target architectures
+           sm_60, sm_61, sm_62,               // sm_6x target architectures
+           sm_50, sm_52, sm_53,               // sm_5x target architectures
+           sm_30, sm_32, sm_35, sm_37,        // sm_3x target architectures
+           sm_20,                             // sm_2x target architectures
+           sm_10, sm_11, sm_12, sm_13,        // sm_1x target architectures
+           texmode_unified, texmode_independent,   // texturing mode
+           debug,                                  // platform option
+           map_f64_to_f32 };                       // platform option
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>指定生成当前 PTX 代码所面向的目标架构特性集合。一般而言，各代 SM 架构遵循“洋葱层模型（onion layer model）”：每一代在保留前代全部特性的基础上增加新特性。洋葱层模型使得为某目标生成的 PTX 代码可以在更晚代的器件上运行。</p>
+<p>带后缀 “a” 的目标（如 sm_90a）包含仅在该指定架构上支持的“架构专属特性”，因此这类目标不遵循洋葱层模型。为这类目标生成的 PTX 代码不能在更晚代器件上运行。架构专属特性只能用于支持这些特性的目标。</p>
+<p>带后缀 “f” 的目标（如 sm_100f）包含仅在同一架构族内支持的“族专属特性”。因此为这类目标生成的 PTX 代码只能在同族的更晚代器件上运行。族专属特性可用于 f 目标，也可用于同族更晚代器件的 a 目标。</p>
+<p>表 61 定义了各架构族。</p>
+<table class="table-no-stripes docutils align-default" id="architecture-family-definition">
+<caption>
+<span class="caption-number">Table 61 </span><span class="caption-text">Architecture Families</span><a class="headerlink" href="#architecture-family-definition" title="Permalink to this table"></a>
+</caption>
+<colgroup>
+<col style="width: 35%">
+<col style="width: 65%">
+</colgroup>
+<th>架构族</th>
+<th>包含的 Target SM 架构</th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p>sm_10x 族</p></td>
+<td><p>sm_100f、sm_103f，以及 sm_10x 族中的未来目标</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>sm_11x 族</p></td>
+<td><p>sm_110f、sm_101f，以及 sm_11x 族中的未来目标</p></td>
+</tr>
+<tr class="row-even">
+<td><p>sm_12x 族</p></td>
+<td><p>sm_120f、sm_121f，以及 sm_12x 族中的未来目标</p></td>
+</tr>
+</tbody>
+</table>
+<p class="rubric">语义</p>
+<p>每个 PTX 模块都必须以 .version 伪指令开头，紧接着是包含目标架构及可选平台选项的 .target 伪指令。一条 .target 伪指令指定单一目标架构，但后续可再出现 .target 伪指令以改变解析时所允许的目标特性集合。包含多条 .target 的程序只能在支持程序中所列最高编号架构全部特性的器件上编译和运行。</p>
+<p>PTX 特性会根据指定的目标架构进行检查，若使用了不支持的特性就会产生错误。下表汇总了随目标架构而变化的 PTX 特性。</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 13%">
+<col style="width: 87%">
+</colgroup>
+<th>目标</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_120</span></code></p></td>
+<td><p>sm_120 架构的基础特性集。</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_120f</span></code></p></td>
+<td><p>增加对 sm_120f 族专属特性的支持。</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_120a</span></code></p></td>
+<td><p>增加对 sm_120a 架构专属特性的支持。</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_121</span></code></p></td>
+<td><p>sm_121 架构的基础特性集。</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_121f</span></code></p></td>
+<td><p>增加对 sm_121f 族专属特性的支持。</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_121a</span></code></p></td>
+<td><p>增加对 sm_121a 架构专属特性的支持。</p></td>
+</tr>
+</tbody>
+</table>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 13%">
+<col style="width: 87%">
+</colgroup>
+<th>目标</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_110</span></code></p></td>
+<td><p>sm_110 架构的基础特性集。</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_110f</span></code></p></td>
+<td><p>增加对 sm_110f 族专属特性的支持。</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_110a</span></code></p></td>
+<td><p>增加对 sm_110a 架构专属特性的支持。</p></td>
+</tr>
+</tbody>
+</table>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 13%">
+<col style="width: 87%">
+</colgroup>
+<th>目标</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_100</span></code></p></td>
+<td><p>sm_100 架构的基础特性集。</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_100f</span></code></p></td>
+<td><p>增加对 sm_100f 族专属特性的支持。</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_100a</span></code></p></td>
+<td><p>增加对 sm_100a 架构专属特性的支持。</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_101</span></code></p></td>
+<td><p>sm_101 架构的基础特性集（已重命名为 sm_110）。</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_101f</span></code></p></td>
+<td><p>增加对 sm_101f 族专属特性的支持（已重命名为 sm_110f）。</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_101a</span></code></p></td>
+<td><p>增加对 sm_101a 架构专属特性的支持（已重命名为 sm_110a）。</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_103</span></code></p></td>
+<td><p>sm_103 架构的基础特性集。</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_103f</span></code></p></td>
+<td><p>增加对 sm_103f 族专属特性的支持。</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_103a</span></code></p></td>
+<td><p>增加对 sm_103a 架构专属特性的支持。</p></td>
+</tr>
+</tbody>
+</table>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 13%">
+<col style="width: 88%">
+</colgroup>
+<th>目标</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_90</span></code></p></td>
+<td><p>sm_90 架构的基础特性集。</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_90a</span></code></p></td>
+<td><p>增加对 sm_90a 架构专属特性的支持。</p></td>
+</tr>
+</tbody>
+</table>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 13%">
+<col style="width: 87%">
+</colgroup>
+<th>目标</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_80</span></code></p></td>
+<td><p>sm_80 架构的基础特性集。</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_86</span></code></p></td>
+<td><p>为 min 与 max 指令增加 .xorsign 修饰符支持。</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_87</span></code></p></td>
+<td><p>sm_87 架构的基础特性集。</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_88</span></code></p></td>
+<td><p>sm_88 架构的基础特性集。</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_89</span></code></p></td>
+<td><p>sm_89 架构的基础特性集。</p></td>
+</tr>
+</tbody>
+</table>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 11%">
+<col style="width: 89%">
+</colgroup>
+<th>目标</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_70</span></code></p></td>
+<td><p>sm_70 架构的基础特性集。</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_72</span></code></p></td>
+<td>为 wmma 指令增加整数被乘数与累加矩阵支持，并增加 cvt.pack 指令支持。</td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_75</span></code></p></td>
+<td>为 wmma 指令增加子字节整数与单比特被乘矩阵支持，并增加 ldmatrix、movmatrix 指令与 tanh 指令支持。</td>
+</tr>
+</tbody>
+</table>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 18%">
+<col style="width: 82%">
+</colgroup>
+<th>目标</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_60</span></code></p></td>
+<td><p>sm_60 架构的基础特性集。</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_61</span></code></p></td>
+<td><p>增加 dp2a 与 dp4a 指令支持。</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_62</span></code></p></td>
+<td><p>sm_61 架构的基础特性集。</p></td>
+</tr>
+</tbody>
+</table>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 11%">
+<col style="width: 89%">
+</colgroup>
+<th>目标</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_50</span></code></p></td>
+<td><p>sm_50 架构的基础特性集。</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_52</span></code></p></td>
+<td><p>sm_50 架构的基础特性集。</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_53</span></code></p></td>
+<td><p>为 .f16 与 .f16x2 类型增加算术、比较与纹理指令支持。</p></td>
+</tr>
+</tbody>
+</table>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 17%">
+<col style="width: 83%">
+</colgroup>
+<th>目标</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_30</span></code></p></td>
+<td><p>sm_30 架构的基础特性集。</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_32</span></code></p></td>
+<td>
+<p>增加 64 位 {atom,red}.{and,or,xor,min,max} 指令。</p>
+<p>增加 shf 指令。</p>
+<p>增加 ld.global.nc 指令。</p>
+</td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_35</span></code></p></td>
+<td><p>增加 CUDA 动态并行（Dynamic Parallelism）支持。</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_37</span></code></p></td>
+<td><p>sm_35 架构的基础特性集。</p></td>
+</tr>
+</tbody>
+</table>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 19%">
+<col style="width: 81%">
+</colgroup>
+<th>目标</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_20</span></code></p></td>
+<td><p>sm_20 架构的基础特性集。</p></td>
+</tr>
+</tbody>
+</table>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 14%">
+<col style="width: 86%">
+</colgroup>
+<th>目标</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_10</span></code></p></td>
+<td>
+<p>sm_10 架构的基础特性集。</p>
+<p>若使用任何 .f64 指令，则需 map_f64_to_f32。</p>
+</td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_11</span></code></p></td>
+<td>
+<p>增加 64 位 {atom,red}.{and,or,xor,min,max} 指令。</p>
+<p>若使用任何 .f64 指令，则需 map_f64_to_f32。</p>
+</td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_12</span></code></p></td>
+<td>
+<p>增加 {atom,red}.shared、64 位 {atom,red}.global 与 vote 指令。</p>
+<p>若使用任何 .f64 指令，则需 map_f64_to_f32。</p>
+</td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_13</span></code></p></td>
+<td>
+<p>增加双精度支持（含扩展舍入修饰符）。</p>
+<p>且不允许使用 map_f64_to_f32。</p>
+</td>
+</tr>
+</tbody>
+</table>
+<p>纹理寻址模式针对整个模块指定，不能在模块内部更改。</p>
+<p>.target 的 debug 选项声明该 PTX 文件包含 DWARF 调试信息，后续 PTX 编译将保留源码级调试所需的信息。若声明了 debug 选项但文件中未发现 DWARF 信息，则会产生错误。debug 选项需要 PTX ISA 3.0 或更高版本。</p>
+<p>map_f64_to_f32 表示所有双精度指令都映射到单精度，与目标架构无关。这使得高级语言编译器可以把包含 double 类型的程序编译到不支持双精度运算的目标器件上。注意 .f64 的存储仍保持 64 位，只是被从 .f64 转换为 .f32 的指令只使用其中一半。</p>
+<p class="rubric">备注</p>
+<p>形如 compute_xx 的目标也作为 sm_xx 目标的同义词被接受。</p>
+<p>从 PTX ISA 9.0 起，目标 sm_{101,101f,101a} 已重命名为 sm_{110,110f,110a}。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 1.0 引入。</p>
+<p>目标字符串 sm_10 与 sm_11 于 PTX ISA 1.0 引入。</p>
+<p>目标字符串 sm_12 与 sm_13 于 PTX ISA 1.2 引入。</p>
+<p>纹理寻址模式于 PTX ISA 1.5 引入。</p>
+<p>目标字符串 sm_20 于 PTX ISA 2.0 引入。</p>
+<p>目标字符串 sm_30 于 PTX ISA 3.0 引入。</p>
+<p>平台选项 debug 于 PTX ISA 3.0 引入。</p>
+<p>目标字符串 sm_35 于 PTX ISA 3.1 引入。</p>
+<p>目标字符串 sm_32 与 sm_50 于 PTX ISA 4.0 引入。</p>
+<p>目标字符串 sm_37 与 sm_52 于 PTX ISA 4.1 引入。</p>
+<p>目标字符串 sm_53 于 PTX ISA 4.2 引入。</p>
+<p>目标字符串 sm_60、sm_61、sm_62 于 PTX ISA 5.0 引入。</p>
+<p>目标字符串 sm_70 于 PTX ISA 6.0 引入。</p>
+<p>目标字符串 sm_72 于 PTX ISA 6.1 引入。</p>
+<p>目标字符串 sm_75 于 PTX ISA 6.3 引入。</p>
+<p>目标字符串 sm_80 于 PTX ISA 7.0 引入。</p>
+<p>目标字符串 sm_86 于 PTX ISA 7.1 引入。</p>
+<p>目标字符串 sm_87 于 PTX ISA 7.4 引入。</p>
+<p>目标字符串 sm_88 于 PTX ISA 9.0 引入。</p>
+<p>目标字符串 sm_89 于 PTX ISA 7.8 引入。</p>
+<p>目标字符串 sm_90 于 PTX ISA 7.8 引入。</p>
+<p>目标字符串 sm_90a 于 PTX ISA 8.0 引入。</p>
+<p>目标字符串 sm_100 于 PTX ISA 8.6 引入。</p>
+<p>目标字符串 sm_100f 于 PTX ISA 8.8 引入。</p>
+<p>目标字符串 sm_100a 于 PTX ISA 8.6 引入。</p>
+<p>目标字符串 sm_101 于 PTX ISA 8.6 引入（已重命名为 sm_110）。</p>
+<p>目标字符串 sm_101f 于 PTX ISA 8.8 引入（已重命名为 sm_110f）。</p>
+<p>目标字符串 sm_101a 于 PTX ISA 8.6 引入（已重命名为 sm_110a）。</p>
+<p>目标字符串 sm_103 于 PTX ISA 8.8 引入。</p>
+<p>目标字符串 sm_103f 于 PTX ISA 8.8 引入。</p>
+<p>目标字符串 sm_103a 于 PTX ISA 8.8 引入。</p>
+<p>目标字符串 sm_110 于 PTX ISA 9.0 引入。</p>
+<p>目标字符串 sm_110f 于 PTX ISA 9.0 引入。</p>
+<p>目标字符串 sm_110a 于 PTX ISA 9.0 引入。</p>
+<p>目标字符串 sm_120 于 PTX ISA 8.7 引入。</p>
+<p>目标字符串 sm_120f 于 PTX ISA 8.8 引入。</p>
+<p>目标字符串 sm_120a 于 PTX ISA 8.7 引入。</p>
+<p>目标字符串 sm_121 于 PTX ISA 8.8 引入。</p>
+<p>目标字符串 sm_121f 于 PTX ISA 8.8 引入。</p>
+<p>目标字符串 sm_121a 于 PTX ISA 8.8 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>.target 伪指令在所有目标架构上均受支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.target sm_10       // baseline target architecture
+.target sm_13       // supports double-precision
+.target sm_20, texmode_independent
+.target sm_90       // baseline target architecture
+.target sm_90a      // PTX using architecture-specific features
+.target sm_100f     // PTX using family-specific features
+</code></pre></div>
+</div>
+</section>
+<section id="ptx-module-directives-address-size">
+<h3>
+<a class="reference internal" href="#ptx-module-directives-address-size">PTX Module Directives: <code class="docutils literal notranslate"><span class="pre">.address_size</span></code></a><a class="headerlink" href="#ptx-module-directives-address-size" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.address_size</span></code></p>
+<p>PTX 模块全程使用的地址尺寸。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.address_size  address-size
+address-size = { 32, 64 };
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>指定 PTX 代码以及 PTX 中二进制 DWARF 信息在整个模块内所采用的地址尺寸。</p>
+<p>模块内不允许重定义该伪指令。在分离编译场景下，所有模块必须指定（或默认采用）相同的地址尺寸。</p>
+<p>.address_size 伪指令是可选的；但如果模块内出现，则必须紧接在 .target 伪指令之后。</p>
+<p class="rubric">语义</p>
+<p>若省略 .address_size 伪指令，地址尺寸默认取 32。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 2.3 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>所有目标架构均支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;// example directives
+   .address_size 32       // addresses are 32 bit
+   .address_size 64       // addresses are 64 bit
+
+// example of directive placement within a module
+   .version 2.3
+   .target sm_20
+   .address_size 64
+...
+.entry foo () {
+...
+}
+</code></pre></div>
+</div>
+</section>
+</section>
+<section id="specifying-kernel-entry-points-and-functions">
+<h2>
+Specifying Kernel Entry Points and Functions<a class="headerlink" href="#specifying-kernel-entry-points-and-functions" title="Permalink to this headline"></a>
+</h2>
+<p>以下伪指令用于指定 kernel 入口点与函数。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">.entry</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.func</span></code></p></li>
+</ul>
+<section id="kernel-and-function-directives-entry">
+<h3>
+<a class="reference internal" href="#kernel-and-function-directives-entry">Kernel and Function Directives: <code class="docutils literal notranslate"><span class="pre">.entry</span></code></a><a class="headerlink" href="#kernel-and-function-directives-entry" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.entry</span></code></p>
+<p>带可选参数的 kernel 入口点及函数体。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.entry kernel-name ( param-list )  kernel-body
+.entry kernel-name  kernel-body
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>为 kernel 函数定义入口点名称、参数及函数体。</p>
+<p>参数通过 .param 状态空间内存传递，并列举在可选的圆括号参数列表中。参数可在 kernel 函数体内按名称引用，并使用 ld.param{::entry} 指令载入寄存器。</p>
+<p>除普通参数外，不透明的 .texref、.samplerref 和 .surfref 变量也可作为参数传递。这些参数只能在纹理与表面（surface）的载入、存储及查询指令中按名称引用，不能通过 ld.param 指令访问。</p>
+<p>执行该 kernel 的 CTA 的形状与尺寸可通过特殊寄存器获取。</p>
+<p class="rubric">语义</p>
+<p>指定 kernel 程序的入口点。</p>
+<p>在 kernel 启动时，kernel 的维度和属性被确定，并通过特殊寄存器（如 %ntid、%nctaid 等）提供。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>对于 PTX ISA 1.4 及更高版本，参数变量在 kernel 参数列表中声明；对于 PTX ISA 1.0 至 1.3，参数变量在 kernel 函数体内声明。</p>
+<p>PTX 对普通（非不透明类型）参数所支持的最大内存尺寸为 32764 字节。根据 PTX ISA 版本不同，参数尺寸上限也有所差异。下表展示了各 PTX ISA 版本所允许的参数尺寸：</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 48%">
+<col style="width: 52%">
+</colgroup>
+<th>PTX ISA 版本</th>
+<th>最大参数尺寸（字节）</th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p>PTX ISA 8.1 及以上</p></td>
+<td><p>32764</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>PTX ISA 1.5 及以上</p></td>
+<td><p>4352</p></td>
+</tr>
+<tr class="row-even">
+<td><p>PTX ISA 1.4 及以上</p></td>
+<td><p>256</p></td>
+</tr>
+</tbody>
+</table>
+<p>CUDA 与 OpenCL 驱动对参数内存支持以下上限：</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 13%">
+<col style="width: 88%">
+</colgroup>
+<th>驱动</th>
+<th>参数内存尺寸</th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td>CUDA</td>
+<td><p>sm_1x 为 256 字节；sm_2x 及更高为 4096 字节；sm_70 及更高为 32764 字节</p></td>
+</tr>
+<tr class="row-odd">
+<td>OpenCL</td>
+<td><p>sm_70 及更高为 32764 字节；sm_6x 及更低为 4352 字节</p></td>
+</tr>
+</tbody>
+</table>
+<p class="rubric">目标 ISA 说明</p>
+<p>所有目标架构均支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.entry cta_fft
+.entry filter ( .param .b32 x, .param .b32 y, .param .b32 z )
+{
+    .reg .b32 %r&amp;lt;99&amp;gt;;
+    ld.param.b32  %r1, [x];
+    ld.param.b32  %r2, [y];
+    ld.param.b32  %r3, [z];
+    ...
+}
+
+.entry prefix_sum ( .param .align 4 .s32 pitch[8000] )
+{
+    .reg .s32 %t;
+    ld.param::entry.s32  %t, [pitch];
+    ...
+}
+</code></pre></div>
+</div>
+</section>
+<section id="kernel-and-function-directives-func">
+<h3>
+<a class="reference internal" href="#kernel-and-function-directives-func">Kernel and Function Directives: <code class="docutils literal notranslate"><span class="pre">.func</span></code></a><a class="headerlink" href="#kernel-and-function-directives-func" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.func</span></code></p>
+<p>函数定义。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.func {.attribute(attr-list)} fname {.noreturn} {.abi_preserve N} {.abi_preserve_control N} function-body
+.func {.attribute(attr-list)} fname (param-list) {.noreturn} {.abi_preserve N} {.abi_preserve_control N} function-body
+.func {.attribute(attr-list)} (ret-param) fname (param-list) {.abi_preserve N} {.abi_preserve_control N} function-body
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>定义一个函数，包括输入参数、返回参数以及可选的函数体。</p>
+<p>可选的 .noreturn 伪指令表示该函数在调用后不返回。.noreturn 不能用于带返回参数的函数。参见“性能调优伪指令：.noreturn”。</p>
+<p>可选的 .attribute 伪指令指定与函数相关的附加信息。允许的属性见“变量与函数属性伪指令：.attribute”。</p>
+<p>可选的 .abi_preserve 与 .abi_preserve_control 伪指令用于指定通用寄存器与控制寄存器的数量。详见“性能调优伪指令：.abi_preserve”与“.abi_preserve_control”。</p>
+<p>若函数指定了任何伪指令（如 .noreturn），则必须在函数声明与定义中保持一致。</p>
+<p>没有函数体的 .func 定义即为函数原型。</p>
+<p>参数列表定义函数体内的局部作用域变量。参数必须是寄存器或参数状态空间中的基类型。寄存器状态空间中的参数可在函数体指令中直接引用；.param 状态空间中的参数通过函数体内的 ld.param{::func} 与 st.param{::func} 指令访问。参数传递采用值传递（call-by-value）。</p>
+<p>参数列表的最后一个参数可以是一个未指定尺寸的 .b8 类型 .param 数组，用于将任意数量的参数打包进单个数组对象传递给函数。</p>
+<p>调用带有此类未定尺寸末参数的函数时，若没有任何参数通过该数组传递，则 call 指令中可以省略末参数。对该数组参数的访问必须落在数组边界内；若未传入数组，或访问越界，则结果是未定义的。</p>
+<p class="rubric">语义</p>
+<p>PTX 语法隐藏了底层调用约定与 ABI 的所有细节。</p>
+<p>参数传递的具体实现交由优化翻译器决定，它可以使用寄存器与栈位置的组合来传递参数。</p>
+<p class="rubric">发布说明</p>
+<p>对于 PTX ISA 1.x 代码，参数必须位于寄存器状态空间，没有栈，且不允许递归。</p>
+<p>PTX ISA 2.0 及更高版本、且目标为 sm_20 或更高时，允许参数位于 .param 状态空间，实现带栈的 ABI，并支持递归。</p>
+<p>PTX ISA 2.0 及更高版本、且目标为 sm_20 或更高时，最多支持一个返回值。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 1.0 引入。</p>
+<p>未定尺寸数组参数的支持于 PTX ISA 6.0 引入。</p>
+<p>.noreturn 伪指令的支持于 PTX ISA 6.4 引入。</p>
+<p>.attribute 伪指令的支持于 PTX ISA 8.0 引入。</p>
+<p>.abi_preserve 与 .abi_preserve_control 伪指令的支持于 PTX ISA 9.0 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>不带未定尺寸数组参数的函数在所有目标架构上均支持。</p>
+<p>未定尺寸数组参数需要 sm_30 或更高。</p>
+<p>.noreturn 伪指令需要 sm_30 或更高。</p>
+<p>.attribute 伪指令需要 sm_90 或更高。</p>
+<p>.abi_preserve 与 .abi_preserve_control 伪指令需要 sm_80 或更高。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.func (.reg .b32 rval) foo (.reg .b32 N, .reg .f64 dbl)
+{
+.reg .b32 localVar;
+
+... use N, dbl;
+other code;
+
+mov.b32 rval,result;
+ret;
+}
+
+...
+call (fooval), foo, (val0, val1);  // return value in fooval
+...
+
+.func foo (.reg .b32 N, .reg .f64 dbl) .noreturn
+{
+.reg .b32 localVar;
+... use N, dbl;
+other code;
+mov.b32 rval, result;
+ret;
+}
+...
+call foo, (val0, val1);
+...
+
+.func (.param .u32 rval) bar(.param .u32 N, .param .align 4 .b8 numbers[])
+{
+    .reg .b32 input0, input1;
+    ld.param.b32   input0, [numbers + 0];
+    ld.param.b32   input1, [numbers + 4];
+    ...
+    other code;
+    ret;
+}
+...
+
+.param .u32 N;
+.param .align 4 .b8 numbers[8];
+st.param.u32    [N], 2;
+st.param.b32    [numbers + 0], 5;
+st.param.b32    [numbers + 4], 10;
+call (rval), bar, (N, numbers);
+...
+</code></pre></div>
+</div>
+</section>
+<section id="kernel-and-function-directives-alias">
+<h3>
+<a class="reference internal" href="#kernel-and-function-directives-alias">Kernel and Function Directives: <code class="docutils literal notranslate"><span class="pre">.alias</span></code></a><a class="headerlink" href="#kernel-and-function-directives-alias" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.alias</span></code></p>
+<p>为已存在的函数符号定义别名。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.alias fAlias, fAliasee;
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>.alias 是模块作用域伪指令，将标识符 fAlias 定义为由 fAliasee 指定的函数的别名。</p>
+<p>fAlias 与 fAliasee 都是非入口（non-entry）函数符号。</p>
+<p>标识符 fAlias 是没有函数体的函数声明。</p>
+<p>标识符 fAliasee 是必须在与 .alias 声明相同的模块中定义的函数符号。函数 fAliasee 不能具有 .weak 链接。</p>
+<p>fAlias 与 fAliasee 的原型必须一致。</p>
+<p>程序既可用 fAlias 也可用 fAlisee 标识符来引用由 fAliasee 定义的函数。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>.alias 伪指令于 PTX ISA 6.3 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>.alias 伪指令需要 sm_30 或更高。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.visible .func foo(.param .u32 p) {
+   ...
+}
+.visible .func bar(.param .u32 p);
+.alias bar, foo;
+.entry test()
+{
+      .param .u32 p;
+      ...
+      call foo, (p);       // call foo directly
+       ...
+       .param .u32 p;
+       call bar, (p);        // call foo through alias
+}
+.entry filter ( .param .b32 x, .param .b32 y, .param .b32 z )
+{
+    .reg .b32 %r1, %r2, %r3;
+    ld.param.b32  %r1, [x];
+    ld.param.b32  %r2, [y];
+    ld.param.b32  %r3, [z];
+    ...
+}
+</code></pre></div>
+</div>
+</section>
+</section>
+<section id="control-flow-directives">
+<h2>
+Control Flow Directives<a class="headerlink" href="#control-flow-directives" title="Permalink to this headline"></a>
+</h2>
+<p>PTX 提供用于指定 brx.idx 与 call 指令潜在目标的伪指令。详见 brx.idx 与 call 的说明。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">.branchtargets</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.calltargets</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.callprototype</span></code></p></li>
+</ul>
+<section id="control-flow-directives-branchtargets">
+<h3>
+<a class="reference internal" href="#control-flow-directives-branchtargets">Control Flow Directives: <code class="docutils literal notranslate"><span class="pre">.branchtargets</span></code></a><a class="headerlink" href="#control-flow-directives-branchtargets" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.branchtargets</span></code></p>
+<p>声明一组潜在的跳转目标。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;Label:   .branchtargets  list-of-labels ;
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>为后续的 brx.idx 声明一组潜在的跳转目标，并将该列表与行首的标号（label）关联。</p>
+<p>列表中的所有控制流标号必须出现在与声明相同的函数内。</p>
+<p>标号列表可使用紧凑的简写语法来枚举具有公共前缀的一组标号，类似于“参数化变量名”中描述的语法。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 2.1 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>需要 sm_20 或更高。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;  .function foo () {
+      .reg .u32 %r0;
+      ...
+      L1:
+      ...
+      L2:
+      ...
+      L3:
+      ...
+      ts: .branchtargets L1, L2, L3;
+      @p brx.idx %r0, ts;
+      ...
+
+.function bar() {
+      .reg .u32 %r0;
+      ...
+      N0:
+      ...
+      N1:
+      ...
+      N2:
+      ...
+      N3:
+      ...
+      N4:
+      ...
+      ts: .branchtargets N&amp;lt;5&amp;gt;;
+      @p brx.idx %r0, ts;
+      ...
+</code></pre></div>
+</div>
+</section>
+<section id="control-flow-directives-calltargets">
+<h3>
+<a class="reference internal" href="#control-flow-directives-calltargets">Control Flow Directives: <code class="docutils literal notranslate"><span class="pre">.calltargets</span></code></a><a class="headerlink" href="#control-flow-directives-calltargets" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.calltargets</span></code></p>
+<p>声明一组潜在的调用目标。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;Label:   .calltargets  list-of-functions ;
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>为后续间接调用声明一组潜在的调用目标，并将该列表与行首的标号关联。</p>
+<p>列表中命名的所有函数必须在 .calltargets 伪指令之前声明，且所有函数必须具有相同的类型签名。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 2.1 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>需要 sm_20 或更高。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;calltgt:  .calltargets  fastsin, fastcos;
+...
+@p   call  (%f1), %r0, (%x), calltgt;
+...
+</code></pre></div>
+</div>
+</section>
+<section id="control-flow-directives-callprototype">
+<h3>
+<a class="reference internal" href="#control-flow-directives-callprototype">Control Flow Directives: <code class="docutils literal notranslate"><span class="pre">.callprototype</span></code></a><a class="headerlink" href="#control-flow-directives-callprototype" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.callprototype</span></code></p>
+<p>声明用于间接调用的原型。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt; // no input or return parameters
+label: .callprototype _ .noreturn {.abi_preserve N} {.abi_preserve_control N};
+// input params, no return params
+label: .callprototype _ (param-list) .noreturn {.abi_preserve N} {.abi_preserve_control N};
+// no input params, // return params
+label: .callprototype (ret-param) _ {.abi_preserve N} {.abi_preserve_control N};
+// input, return parameters
+label: .callprototype (ret-param) _ (param-list) {.abi_preserve N} {.abi_preserve_control N};
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>定义一个没有具体函数名的原型，并将该原型与标号关联。随后该原型可用于可能调用目标信息不完整的间接调用指令中。</p>
+<p>参数可以是寄存器或参数状态空间中的基类型，也可以是参数状态空间中的数组类型。可使用占位符号 ‘_’ 来省略哑参数名。</p>
+<p>可选的 .noreturn 伪指令表示该函数在调用后不返回。.noreturn 不能用于带返回参数的函数。参见“性能调优伪指令：.noreturn”。</p>
+<p>可选的 .abi_preserve 与 .abi_preserve_control 伪指令用于指定通用寄存器与控制寄存器的数量。详见“性能调优伪指令：.abi_preserve”与“.abi_preserve_control”。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 2.1 引入。</p>
+<p>.noreturn 伪指令的支持于 PTX ISA 6.4 引入。</p>
+<p>.abi_preserve 与 .abi_preserve_control 伪指令的支持于 PTX ISA 9.0 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>需要 sm_20 或更高。</p>
+<p>.noreturn 伪指令需要 sm_30 或更高。</p>
+<p>.abi_preserve 与 .abi_preserve_control 伪指令需要 sm_80 或更高。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;Fproto1: .callprototype  _ ;
+Fproto2: .callprototype  _ (.param .f32 _);
+Fproto3: .callprototype  (.param .u32 _) _ ;
+Fproto4: .callprototype  (.param .u32 _) _ (.param .f32 _);
+...
+@p   call  (%val), %r0, (%f1), Fproto4;
+...
+
+// example of array parameter
+Fproto5: .callprototype _ (.param .b8 _[12]);
+
+Fproto6: .callprototype  _ (.param .f32 _) .noreturn;
+...
+@p   call  %r0, (%f1), Fproto6;
+...
+
+// example of .abi_preserve
+Fproto7: .callprototype _ (.param .b32 _) .abi_preserve 10;
+...
+@p   call %r0, (%r1), Fproto7;
+...
+</code></pre></div>
+</div>
+</section>
+</section>
+<section id="performance-tuning-directives">
+<h2>
+Performance-Tuning Directives<a class="headerlink" href="#performance-tuning-directives" title="Permalink to this headline"></a>
+</h2>
+<p>为提供底层性能调优机制，PTX 支持以下伪指令，它们把信息传递给优化后端编译器。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">.maxnreg</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.maxntid</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.reqntid</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.minnctapersm</span></code></p></li>
+<li><p>.maxnctapersm（已废弃）</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.pragma</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.abi_preserve</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.abi_preserve_control</span></code></p></li>
+</ul>
+<p>.maxnreg 伪指令指定分配给单个线程的最大寄存器数；.maxntid 指定线程块（CTA）内的最大线程数；.reqntid 指定线程块（CTA）所需的线程数；.minnctapersm 指定调度到单个多处理器（SM）上的最小线程块数。这些可用于例如限制资源需求（如寄存器）以提升总线程数、增大隐藏内存延迟的机会。.minnctapersm 可与 .maxntid 或 .reqntid 配合使用，在“每线程寄存器数”与“多处理器利用率”之间做权衡，而无需直接指定最大寄存器数；在面向每 SM 寄存器数不同的多器件编译 PTX 时可能获得更好性能。</p>
+<p>设备函数伪指令 .abi_preserve 与 .abi_preserve_control 指定函数必须为其调用者保留的、来自被调用者保存（callee-save）寄存器的数据与控制寄存器数量。可理解为函数被调用时调用者中仍然存活的通用寄存器与控制寄存器数量。控制寄存器指导致当前函数调用的调用树（calltree）中出现的分叉程序点数量。</p>
+<p>目前，.maxnreg、.maxntid、.reqntid 与 .minnctapersm 伪指令可按入口（per-entry）应用，且必须出现在 .entry 伪指令与其函数体之间。这些伪指令优先于传递给优化后端的任何模块级约束。若这些伪指令的约束相互矛盾，或对所指定的目标器件无法满足，则会产生警告信息。</p>
+<p>支持通用的 .pragma 伪指令以向 PTX 后端传递信息。该伪指令向后端传递一组字符串，这些字符串在 PTX 虚拟机模型中没有语义。.pragma 值的解释由后端实现决定，不在 PTX ISA 范畴内。注意 .pragma 伪指令可出现在模块（文件）作用域、入口作用域，或作为 kernel/设备函数体内的语句。</p>
+<section id="performance-tuning-directives-maxnreg">
+<h3>
+<a class="reference internal" href="#performance-tuning-directives-maxnreg">Performance-Tuning Directives: <code class="docutils literal notranslate"><span class="pre">.maxnreg</span></code></a><a class="headerlink" href="#performance-tuning-directives-maxnreg" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.maxnreg</span></code></p>
+<p>每个线程可分配的最大寄存器数。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.maxnreg n
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>声明 CTA 中每个线程的最大寄存器数。</p>
+<p class="rubric">语义</p>
+<p>编译器保证不超过此上限。实际使用的寄存器数可能更少——例如后端可能编译出更少的寄存器，或最大寄存器数被 .maxntid 与 .maxctapersm 进一步约束。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 1.3 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>所有目标架构均支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.entry foo .maxnreg 16 { ... }  // max regs per thread = 16
+</code></pre></div>
+</div>
+</section>
+<section id="performance-tuning-directives-maxntid">
+<h3>
+<a class="reference internal" href="#performance-tuning-directives-maxntid">Performance-Tuning Directives: <code class="docutils literal notranslate"><span class="pre">.maxntid</span></code></a><a class="headerlink" href="#performance-tuning-directives-maxntid" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.maxntid</span></code></p>
+<p>线程块（CTA）内的最大线程数。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.maxntid nx
+.maxntid nx, ny
+.maxntid nx, ny, nz
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>声明线程块（CTA）内的最大线程数。该最大值通过给出 1D、2D 或 3D CTA 各维的最大跨度来指定，最大线程数即各维最大跨度的乘积。</p>
+<p class="rubric">语义</p>
+<p>线程块的最大线程数（即各维最大跨度的乘积）保证在本伪指令所在 kernel 的任何一次调用中都不会被超过。超过最大线程数会导致运行时错误或 kernel 启动失败。</p>
+<p>注意该伪指令只保证线程总数不超过最大值，并不保证某一特定维度的上限不被超过。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 1.3 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>所有目标架构均支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.entry foo .maxntid 256       { ... }  // max threads = 256
+.entry bar .maxntid 16,16,4   { ... }  // max threads = 1024
+</code></pre></div>
+</div>
+</section>
+<section id="performance-tuning-directives-reqntid">
+<h3>
+<a class="reference internal" href="#performance-tuning-directives-reqntid">Performance-Tuning Directives: <code class="docutils literal notranslate"><span class="pre">.reqntid</span></code></a><a class="headerlink" href="#performance-tuning-directives-reqntid" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.reqntid</span></code></p>
+<p>线程块（CTA）内的线程数。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.reqntid nx
+.reqntid nx, ny
+.reqntid nx, ny, nz
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>通过指定 1D、2D 或 3D CTA 各维的跨度来声明线程块（CTA）内的线程数。总线程数为各维线程数的乘积。</p>
+<p class="rubric">语义</p>
+<p>kernel 任何一次调用中所指定的各 CTA 维度大小必须等于本伪指令所指定的值。启动时指定不同的 CTA 维度会导致运行时错误或 kernel 启动失败。</p>
+<p class="rubric">备注</p>
+<p>.reqntid 伪指令不能与 .maxntid 伪指令同时使用。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 2.1 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>所有目标架构均支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.entry foo .reqntid 256       { ... }  // num threads = 256
+.entry bar .reqntid 16,16,4   { ... }  // num threads = 1024
+</code></pre></div>
+</div>
+</section>
+<section id="performance-tuning-directives-minnctapersm">
+<h3>
+<a class="reference internal" href="#performance-tuning-directives-minnctapersm">Performance-Tuning Directives: <code class="docutils literal notranslate"><span class="pre">.minnctapersm</span></code></a><a class="headerlink" href="#performance-tuning-directives-minnctapersm" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.minnctapersm</span></code></p>
+<p>每个 SM 的最小 CTA 数。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.minnctapersm ncta
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>声明 kernel 的网格中映射到单个多处理器（SM）的最小 CTA 数。</p>
+<p class="rubric">备注</p>
+<p>基于 .minnctapersm 的优化还需要同时指定 .maxntid 或 .reqntid。</p>
+<p>若由 .minnctapersm 与 .maxntid/.reqntid 得出的单个 SM 上的总线程数超过 SM 支持的最大线程数，则 .minnctapersm 伪指令会被忽略。</p>
+<p>在 PTX ISA 2.1 或更高版本中，若指定了 .minnctapersm 却未指定 .maxntid 或 .reqntid，会产生警告。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 2.0 引入，作为 .maxnctapersm 的替代。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>所有目标架构均支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.entry foo .maxntid 256 .minnctapersm 4 { ... }
+</code></pre></div>
+</div>
+</section>
+<section id="performance-tuning-directives-maxnctapersm">
+<h3>
+<a class="reference internal" href="#performance-tuning-directives-maxnctapersm">Performance-Tuning Directives: <code class="docutils literal notranslate"><span class="pre">.maxnctapersm</span></code> (deprecated)</a><a class="headerlink" href="#performance-tuning-directives-maxnctapersm" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.maxnctapersm</span></code></p>
+<p>每个 SM 的最大 CTA 数。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.maxnctapersm ncta
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>声明 kernel 的网格中可映射到单个多处理器（SM）的最大 CTA 数。</p>
+<p class="rubric">备注</p>
+<p>基于 .maxnctapersm 的优化通常也需要指定 .maxntid。优化后端编译器使用 .maxntid 与 .maxnctapersm 计算每线程寄存器用量的上界，以便将指定数量的 CTA 映射到单个多处理器。但若后端实际使用的寄存器数远低于该上界，可能会有更多 CTA 被映射到一个多处理器。因此，在 PTX ISA 2.0 中 .maxnctapersm 已被重命名为 .minnctapersm。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 1.3 引入，于 PTX ISA 2.0 废弃。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>所有目标架构均支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.entry foo .maxntid 256 .maxnctapersm 4 { ... }
+</code></pre></div>
+</div>
+</section>
+<section id="performance-tuning-directives-noreturn">
+<h3>
+<a class="reference internal" href="#performance-tuning-directives-noreturn">Performance-Tuning Directives: <code class="docutils literal notranslate"><span class="pre">.noreturn</span></code></a><a class="headerlink" href="#performance-tuning-directives-noreturn" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.noreturn</span></code></p>
+<p>声明该函数不会返回其调用者。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.noreturn
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>声明该函数不会返回其调用者。</p>
+<p class="rubric">语义</p>
+<p>可选的 .noreturn 伪指令表示该函数在调用后不返回。.noreturn 只能用于设备函数，且必须出现在 .func 伪指令与其函数体之间。</p>
+<p>该伪指令不能用于带返回参数的函数。</p>
+<p>若带有 .noreturn 伪指令的函数在运行时返回了调用者，则行为是未定义的。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 6.4 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>需要 sm_30 或更高。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.func foo .noreturn { ... }
+</code></pre></div>
+</div>
+</section>
+<section id="performance-tuning-directives-pragma">
+<h3>
+<a class="reference internal" href="#performance-tuning-directives-pragma">Performance-Tuning Directives: <code class="docutils literal notranslate"><span class="pre">.pragma</span></code></a><a class="headerlink" href="#performance-tuning-directives-pragma" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.pragma</span></code></p>
+<p>向 PTX 后端编译器传递伪指令。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.pragma list-of-strings ;
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>向 PTX 后端编译器传递模块作用域、入口作用域或语句级伪指令。</p>
+<p>.pragma 伪指令可出现在模块作用域、入口作用域或语句级。</p>
+<p class="rubric">语义</p>
+<p>.pragma 伪指令字符串的解释由具体实现决定，对 PTX 语义无影响。ptxas 中定义的 pragma 字符串说明见“.pragma 字符串说明”。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 2.0 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>所有目标架构均支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.pragma &quot;nounroll&quot;;    // disable unrolling in backend
+
+// disable unrolling for current kernel
+.entry foo .pragma &quot;nounroll&quot;; { ... }
+</code></pre></div>
+</div>
+</section>
+<section id="performance-tuning-directives-abi-preserve">
+<h3>
+<a class="reference internal" href="#performance-tuning-directives-abi-preserve">Performance-Tuning Directives: <code class="docutils literal notranslate"><span class="pre">.abi_preserve</span></code></a><a class="headerlink" href="#performance-tuning-directives-abi-preserve" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.abi_preserve</span></code></p>
+<p>指定该函数的调用者应当保留的通用寄存器数量。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.abi_preserve N
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>这是一个与架构无关的值，表示实际的通用寄存器数量。ABI 内部将部分通用寄存器定义为被保留（callee-save）寄存器。整数 N 指定该函数应当保留的实际通用寄存器数量。</p>
+<p>.abi_preserve 伪指令只能用于设备函数，且必须出现在 .func 伪指令与其函数体之间。</p>
+<p class="rubric">语义</p>
+<p>指定该伪指令后，编译器后端会修改底层 ABI 组件，确保该函数调用者中存放在 callee-save 寄存器内的存活数据变量数小于指定值。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 9.0 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>需要 sm_80 或更高。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.func bar() .abi_preserve 8
+
+// Indirect call via call prototype
+.func (.param .b32 out[30]) foo (.param .b32 in[30]) .abi_preserve 10 { ... }
+...
+mov.b64 lpfoo, foo;
+prot: .callprototype (.param .b32 out[30]) _ (.param .b32 in[30]) .abi_preserve 10;
+call (out), lpfoo, (in), prot;
+</code></pre></div>
+</div>
+</section>
+<section id="performance-tuning-directives-abi-preserve-control">
+<h3>
+<a class="reference internal" href="#performance-tuning-directives-abi-preserve-control">Performance-Tuning Directives: <code class="docutils literal notranslate"><span class="pre">.abi_preserve_control</span></code></a><a class="headerlink" href="#performance-tuning-directives-abi-preserve-control" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.abi_preserve_control</span></code></p>
+<p>指定该函数的调用者应当保留的控制寄存器数量。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.abi_preserve_control N
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>这是一个与架构无关的值，表示导致当前函数调用的调用树（calltree）中出现的分叉程序点数量。ABI 内部将部分控制寄存器定义为被保留（callee-save）寄存器。整数 N 指定该函数应当保留的实际控制寄存器数量。</p>
+<p>.abi_preserve_control 伪指令只能用于设备函数，且必须出现在 .func 伪指令与其函数体之间。</p>
+<p class="rubric">语义</p>
+<p>指定该伪指令后，编译器后端会修改底层 ABI 组件，确保该函数调用者中存放在 callee-save 控制寄存器内的存活控制变量数小于指定值。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 9.0 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>需要 sm_80 或更高。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.func foo() .abi_preserve_control 14
+
+// Indirect call via call prototype
+.func (.param .b32 out[30]) bar (.param .b32 in[30]) .abi_preserve_control 10 { ... }
+...
+mov.b64 lpbar, bar;
+prot: .callprototype (.param .b32 out[30]) _ (.param .b32 in[30]) .abi_preserve_control 10;
+call (out), lpbar, (in), prot;
+</code></pre></div>
+</div>
+</section>
+</section>
+<section id="debugging-directives">
+<h2>
+Debugging Directives<a class="headerlink" href="#debugging-directives" title="Permalink to this headline"></a>
+</h2>
+<p>PTX 模块通过以下伪指令传递 DWARF 格式的调试信息：</p>
+<ul class="simple">
+<li><p>@@DWARF</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.section</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.file</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.loc</span></code></p></li>
+</ul>
+<p>.section 伪指令于 PTX ISA 2.0 引入，替代了 @@DWARF 语法。@@DWARF 语法在 PTX ISA 2.0 中废弃，但仍为遗留的 PTX ISA 1.x 代码所支持。</p>
+<p>从 PTX ISA 3.0 起，包含 DWARF 调试信息的 PTX 文件应当包含 .target 的 debug 平台选项。该前向声明指示 PTX 编译保留源码级调试所需的映射。</p>
+<section id="debugging-directives-atatdwarf">
+<h3>
+<a class="reference internal" href="#debugging-directives-atatdwarf">Debugging Directives: <code class="docutils literal notranslate"><span class="pre">@@dwarf</span></code></a><a class="headerlink" href="#debugging-directives-atatdwarf" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">@@dwarf</span></code></p>
+<p>DWARF 格式信息。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;@@DWARF dwarf-string
+
+dwarf-string may have one of the
+.byte   byte-list   // comma-separated hexadecimal byte values
+.4byte  int32-list  // comma-separated hexadecimal integers in range [0..2^32-1]
+.quad   int64-list  // comma-separated hexadecimal integers in range [0..2^64-1]
+.4byte  label
+.quad   label
+</code></pre></div>
+</div>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 1.2 引入，自 PTX ISA 2.0 起废弃，由 .section 伪指令替代。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>所有目标架构均支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;@@DWARF .section .debug_pubnames, &quot;&quot;, @progbits
+@@DWARF .byte   0x2b, 0x00, 0x00, 0x00, 0x02, 0x00
+@@DWARF .4byte  .debug_info
+@@DWARF .4byte  0x000006b5, 0x00000364, 0x61395a5f, 0x5f736f63
+@@DWARF .4byte  0x6e69616d, 0x63613031, 0x6150736f, 0x736d6172
+@@DWARF .byte   0x00, 0x00, 0x00, 0x00, 0x00
+</code></pre></div>
+</div>
+</section>
+<section id="debugging-directives-section">
+<h3>
+<a class="reference internal" href="#debugging-directives-section">Debugging Directives: <code class="docutils literal notranslate"><span class="pre">.section</span></code></a><a class="headerlink" href="#debugging-directives-section" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.section</span></code></p>
+<p>PTX 段（section）定义。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.section section_name { dwarf-lines }
+
+dwarf-lines have the following formats:
+  .b8    byte-list       // comma-separated list of integers
+                         // in range [-128..255]
+  .b16   int16-list      // comma-separated list of integers
+                         // in range [-2^15..2^16-1]
+  .b32   int32-list      // comma-separated list of integers
+                         // in range [-2^31..2^32-1]
+  label:                 // Define label inside the debug section
+  .b64   int64-list      // comma-separated list of integers
+                         // in range [-2^63..2^64-1]
+  .b32   label
+  .b64   label
+  .b32   label+imm       // a sum of label address plus a constant integer byte
+                         // offset(signed, 32bit)
+  .b64   label+imm       // a sum of label address plus a constant integer byte
+                         // offset(signed, 64bit)
+  .b32   label1-label2   // a difference in label addresses between labels in
+                         // the same dwarf section (32bit)
+  .b64   label3-label4   // a difference in label addresses between labels in
+                         // the same dwarf section (64bit)
+</code></pre></div>
+</div>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 2.0 引入，替代 @@DWARF 语法。</p>
+<p>label+imm 表达式于 PTX ISA 3.2 引入。</p>
+<p>dwarf-lines 中 .b16 整数的支持于 PTX ISA 6.0 引入。</p>
+<p>在 DWARF 段内定义 label 的支持于 PTX ISA 7.2 引入。</p>
+<p>label1-label2 表达式于 PTX ISA 7.5 引入。</p>
+<p>dwarf lines 中负数的支持于 PTX ISA 7.5 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>所有目标架构均支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.section .debug_pubnames
+{
+    .b32    LpubNames_end0-LpubNames_begin0
+  LpubNames_begin0:
+    .b8     0x2b, 0x00, 0x00, 0x00, 0x02, 0x00
+    .b32    .debug_info
+  info_label1:
+    .b32    0x000006b5, 0x00000364, 0x61395a5f, 0x5f736f63
+    .b32    0x6e69616d, 0x63613031, 0x6150736f, 0x736d6172
+    .b8     0x00, 0x00, 0x00, 0x00, 0x00
+  LpubNames_end0:
+}
+
+.section .debug_info
+{
+    .b32 11430
+    .b8 2, 0
+    .b32 .debug_abbrev
+    .b8 8, 1, 108, 103, 101, 110, 102, 101, 58, 32, 69, 68, 71, 32, 52, 46, 49
+    .b8 0
+    .b32 3, 37, 176, -99
+    .b32 info_label1
+    .b32 .debug_loc+0x4
+    .b8 -11, 11, 112, 97
+    .b32 info_label1+12
+    .b64 -1
+    .b16 -5, -65535
+}
+</code></pre></div>
+</div>
+</section>
+<section id="debugging-directives-file">
+<h3>
+<a class="reference internal" href="#debugging-directives-file">Debugging Directives: <code class="docutils literal notranslate"><span class="pre">.file</span></code></a><a class="headerlink" href="#debugging-directives-file" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.file</span></code></p>
+<p>源文件名。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.file file_index &quot;filename&quot; {, timestamp, file_size}
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>将一个源文件名与一个整数索引关联。.loc 伪指令通过该索引引用源文件。</p>
+<p>.file 伪指令允许可选地指定一个表示最后修改时间的无符号数，以及一个表示源文件字节大小的无符号整数。timestamp 与 file_size 可以为 0，表示此信息不可用。</p>
+<p>timestamp 值采用 C/C++ 的 time_t 类型格式。</p>
+<p>file_size 是无符号 64 位整数。</p>
+<p>.file 伪指令只允许出现在最外层作用域，即与 kernel 及设备函数声明同级。</p>
+<p class="rubric">语义</p>
+<p>若未指定 timestamp 与 file_size，则默认取 0。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 1.0 引入。</p>
+<p>timestamp 与 file_size 于 PTX ISA 3.2 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>所有目标架构均支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.file 1 &quot;example.cu&quot;
+.file 2 &quot;kernel.cu&quot;
+.file 1 &quot;kernel.cu&quot;, 1339013327, 64118
+</code></pre></div>
+</div>
+</section>
+<section id="debugging-directives-loc">
+<h3>
+<a class="reference internal" href="#debugging-directives-loc">Debugging Directives: <code class="docutils literal notranslate"><span class="pre">.loc</span></code></a><a class="headerlink" href="#debugging-directives-loc" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.loc</span></code></p>
+<p>源文件位置。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.loc file_index line_number column_position
+.loc file_index line_number column_position,function_name label {+ immediate }, inlined_at file_index2 line_number2 column_position2
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>声明与词法上后续 PTX 指令相关联的源文件位置（源文件、行号、列位置）。.loc 引用的 file_index 由 .file 伪指令定义。</p>
+<p>为标明由被内联函数生成的 PTX 指令，可在 .loc 伪指令中指定附加属性 .inlined_at，它表示该函数被内联处的源位置。file_index2、line_number2、column_position2 指定函数被内联的位置。.inlined_at 所指定的源位置必须在词法上早于 .loc 伪指令中的源位置。</p>
+<p>function_name 属性指定 .debug_str 段中的偏移量，以 label 表达式或 label + 立即数表达式给出，其中 label 定义于 .debug_str 段。.debug_str 段包含以 ASCII 空字符结尾的字符串，表示被内联函数的名称。</p>
+<p>注意一条 PTX 指令最多有一个相关联的源位置，由词法上最近的前驱 .loc 伪指令决定；若无前驱 .loc 则无关联源位置。PTX 中的标号继承其词法上最接近的后续指令的位置；没有后续 PTX 指令的标号则无关联源位置。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 1.0 引入。</p>
+<p>function_name 与 inlined_at 属性于 PTX ISA 7.2 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>所有目标架构均支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;    .loc 2 4237 0
+L1:                        // line 4237, col 0 of file #2,
+                           // inherited from mov
+    mov.u32  %r1,%r2;      // line 4237, col 0 of file #2
+    add.u32  %r2,%r1,%r3;  // line 4237, col 0 of file #2
+...
+L2:                        // line 4239, col 5 of file #2,
+                           // inherited from sub
+    .loc 2 4239 5
+    sub.u32  %r2,%r1,%r3;  // line 4239, col 5 of file #2
+    .loc 1 21 3
+    .loc 1 9 3, function_name info_string0, inlined_at 1 21 3
+    ld.global.u32   %r1, [gg]; // Function at line 9
+    setp.lt.s32 %p1, %r1, 8;   // inlined at line 21
+    .loc 1 27 3
+    .loc 1 10 5, function_name info_string1, inlined_at 1 27 3
+    .loc 1 15 3, function_name .debug_str+16, inlined_at 1 10 5
+    setp.ne.s32 %p2, %r1, 18;
+    @%p2 bra    BB2_3;
+
+    .section .debug_str {
+    info_string0:
+     .b8 95  // _
+     .b8 90  // z
+     .b8 51  // 3
+     .b8 102 // f
+     .b8 111 // o
+     .b8 111 // o
+     .b8 118 // v
+     .b8 0
+
+    info_string1:
+     .b8 95  // _
+     .b8 90  // z
+     .b8 51  // 3
+     .b8 98  // b
+     .b8 97  // a
+     .b8 114 // r
+     .b8 118 // v
+     .b8 0
+     .b8 95  // _
+     .b8 90  // z
+     .b8 51  // 3
+     .b8 99  // c
+     .b8 97  // a
+     .b8 114 // r
+     .b8 118 // v
+     .b8 0
+    }
+</code></pre></div>
+</div>
+</section>
+</section>
+<section id="linking-directives">
+<h2>
+Linking Directives<a class="headerlink" href="#linking-directives" title="Permalink to this headline"></a>
+</h2>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">.extern</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.visible</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.weak</span></code></p></li>
+</ul>
+<section id="linking-directives-extern">
+<h3>
+<a class="reference internal" href="#linking-directives-extern">Linking Directives: <code class="docutils literal notranslate"><span class="pre">.extern</span></code></a><a class="headerlink" href="#linking-directives-extern" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.extern</span></code></p>
+<p>外部符号声明。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.extern identifier
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>声明标识符在当前模块之外定义。定义该标识符的模块必须在单个目标文件中仅以 .weak 或 .visible 定义一次。符号的 extern 声明可多次出现，对其引用会解析到该符号的唯一定义。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 1.0 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>所有目标架构均支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.extern .global .b32 foo;  // foo is defined in another module
+</code></pre></div>
+</div>
+</section>
+<section id="linking-directives-visible">
+<h3>
+<a class="reference internal" href="#linking-directives-visible">Linking Directives: <code class="docutils literal notranslate"><span class="pre">.visible</span></code></a><a class="headerlink" href="#linking-directives-visible" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.visible</span></code></p>
+<p>（对外）可见符号声明。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.visible identifier
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>声明标识符为全局可见。与 C 不同（C 中除非声明为 static 否则标识符全局可见），PTX 标识符默认仅在当前模块内可见，除非在当前模块之外声明为 .visible。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 1.0 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>所有目标架构均支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.visible .global .b32 foo;  // foo will be externally visible
+</code></pre></div>
+</div>
+</section>
+<section id="linking-directives-weak">
+<h3>
+<a class="reference internal" href="#linking-directives-weak">Linking Directives: <code class="docutils literal notranslate"><span class="pre">.weak</span></code></a><a class="headerlink" href="#linking-directives-weak" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.weak</span></code></p>
+<p>（对外）可见符号声明。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.weak identifier
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>声明标识符为全局可见但为弱符号（weak）。弱符号与全局可见符号类似，但在链接时，符号解析中弱符号仅在全局可见符号之后才会被选用。与全局可见符号不同，多个目标文件可声明同一弱符号，且只有当没有同名全局符号时，对该符号的引用才解析到弱符号。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 3.1 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>所有目标架构均支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.weak .func (.reg .b32 val) foo;  // foo will be externally visible
+</code></pre></div>
+</div>
+</section>
+<section id="linking-directives-common">
+<h3>
+<a class="reference internal" href="#linking-directives-common">Linking Directives: <code class="docutils literal notranslate"><span class="pre">.common</span></code></a><a class="headerlink" href="#linking-directives-common" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.common</span></code></p>
+<p>（对外）可见符号声明。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.common identifier
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>声明标识符为全局可见但属于“common”符号。</p>
+<p>common 符号与全局可见符号类似，但多个目标文件可声明同一 common 符号，且它们可以具有不同类型与尺寸；对该符号的引用会解析到尺寸最大的 common 符号。</p>
+<p>只有一个目标文件可以初始化 common 符号，且其尺寸必须是来自不同目标文件的所有该 common 符号定义中最大的。</p>
+<p>.common 链接伪指令只能用于具有 .global 存储的变量，不能用于函数符号或不透明类型的符号。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 5.0 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>.common 伪指令需要 sm_20 或更高。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.common .global .u32 gbl;
+</code></pre></div>
+</div>
+</section>
+</section>
+<section id="cluster-dimension-directives">
+<h2>
+Cluster Dimension Directives<a class="headerlink" href="#cluster-dimension-directives" title="Permalink to this headline"></a>
+</h2>
+<p>以下伪指令用于指定关于簇（cluster）的信息：</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">.reqnctapercluster</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.explicitcluster</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.maxclusterrank</span></code></p></li>
+</ul>
+<p>.reqnctapercluster 伪指令指定簇中的 CTA 数；.explicitcluster 指定 kernel 应以显式簇信息启动；.maxclusterrank 指定簇中 CTA 的最大数量。</p>
+<p>簇维度伪指令只能用于 kernel 函数。</p>
+<section id="cluster-dimension-directives-reqnctapercluster">
+<h3>
+<a class="reference internal" href="#cluster-dimension-directives-reqnctapercluster">Cluster Dimension Directives: <code class="docutils literal notranslate"><span class="pre">.reqnctapercluster</span></code></a><a class="headerlink" href="#cluster-dimension-directives-reqnctapercluster" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.reqnctapercluster</span></code></p>
+<p>声明簇中的 CTA 数量。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.reqnctapercluster nx
+.reqnctapercluster nx, ny
+.reqnctapercluster nx, ny, nz
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>通过指定 1D、2D 或 3D 簇各维的跨度来设定簇中的线程块（CTA）数。CTA 总数为各维 CTA 数的乘积。对于指定了 .reqnctapercluster 的 kernel，若启动时未指定相应值，运行时将使用此处指定的值来配置启动。</p>
+<p class="rubric">语义</p>
+<p>若在启动时显式指定了簇维度，则必须等于本伪指令所指定的值。启动时指定不同的簇维度会导致运行时错误或 kernel 启动失败。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 7.8 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>需要 sm_90 或更高。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.entry foo .reqnctapercluster 2         { . . . }
+.entry bar .reqnctapercluster 2, 2, 1   { . . . }
+.entry ker .reqnctapercluster 3, 2      { . . . }
+</code></pre></div>
+</div>
+</section>
+<section id="cluster-dimension-directives-explicitcluster">
+<h3>
+<a class="reference internal" href="#cluster-dimension-directives-explicitcluster">Cluster Dimension Directives: <code class="docutils literal notranslate"><span class="pre">.explicitcluster</span></code></a><a class="headerlink" href="#cluster-dimension-directives-explicitcluster" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.explicitcluster</span></code></p>
+<p>声明 kernel 必须以显式指定的簇维度启动。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.explicitcluster
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>声明该 kernel 应以显式指定的簇维度启动。</p>
+<p class="rubric">语义</p>
+<p>带有 .explicitcluster 的 kernel 必须以显式指定的簇维度启动（启动时指定或通过 .reqnctapercluster），否则程序会因运行时错误或 kernel 启动失败而失败。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 7.8 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>需要 sm_90 或更高。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.entry foo .explicitcluster         { . . . }
+</code></pre></div>
+</div>
+</section>
+<section id="cluster-dimension-directives-maxclusterrank">
+<h3>
+<a class="reference internal" href="#cluster-dimension-directives-maxclusterrank">Cluster Dimension Directives: <code class="docutils literal notranslate"><span class="pre">.maxclusterrank</span></code></a><a class="headerlink" href="#cluster-dimension-directives-maxclusterrank" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.maxclusterrank</span></code></p>
+<p>声明可作为簇一部分的 CTA 的最大数量。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.maxclusterrank n
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>声明允许作为簇一部分的线程块（CTA）的最大数量。</p>
+<p class="rubric">语义</p>
+<p>kernel 任何一次调用中各簇维度 CTA 数的乘积必须小于或等于本伪指令所指定的值，否则调用会导致运行时错误或 kernel 启动失败。</p>
+<p>.maxclusterrank 伪指令不能与 .reqnctapercluster 伪指令同时使用。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 7.8 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>需要 sm_90 或更高。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.entry foo ..maxclusterrank 8         { . . . }
+</code></pre></div>
+</div>
+</section>
+</section>
+<section id="miscellaneous-directives">
+<h2>
+Miscellaneous Directives<a class="headerlink" href="#miscellaneous-directives" title="Permalink to this headline"></a>
+</h2>
+<p>PTX 提供以下其他伪指令：</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">.blocksareclusters</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.language</span></code></p></li>
+</ul>
+<section id="miscellaneous-directives-blocksareclusters">
+<h3>
+<a class="reference internal" href="#miscellaneous-directives-blocksareclusters">Miscellaneous Directives: <code class="docutils literal notranslate"><span class="pre">.blocksareclusters</span></code></a><a class="headerlink" href="#miscellaneous-directives-blocksareclusters" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.blocksareclusters</span></code></p>
+<p>指定 CUDA 线程块被映射到簇。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.blocksareclusters
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>CUDA API 的默认行为是通过指定线程块数与每块的线程数来配置网格启动。</p>
+<p>当指定了 .blocksareclusters 时，意味着对应 .entry 函数的网格启动配置是在指定簇的数量——即启动配置指定的是簇数而非线程块数。此时每簇的线程块数由 .reqnctapercluster 指定，线程块尺寸由 .reqntid 指定。</p>
+<p>.blocksareclusters 伪指令只允许用于 .entry 函数，且还需要指定 .reqntid 与 .reqnctapercluster 伪指令。</p>
+<p>更多细节请参阅《CUDA 编程指南》。</p>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 9.0 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>需要 sm_90 或更高。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.entry foo .reqntid 32, 32, 1 .reqnctapercluster 32, 32, 1 .blocksareclusters { ... }
+</code></pre></div>
+</div>
+</section>
+<section id="miscellaneous-directives-language">
+<h3>
+<a class="reference internal" href="#miscellaneous-directives-language">Miscellaneous Directives: <code class="docutils literal notranslate"><span class="pre">.language</span></code></a><a class="headerlink" href="#miscellaneous-directives-language" title="Permalink to this headline"></a>
+</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.language</span></code></p>
+<p>指定用于生成该 kernel 或函数的源语言。</p>
+<p class="rubric">语法</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.language lang-list   // comma separated list of strings or integers
+</code></pre></div>
+</div>
+<p class="rubric">说明</p>
+<p>.language 伪指令声明生成对应 .entry 或 .func 函数代码的源语言。该伪指令接受以逗号分隔的语言代码列表，可以是带引号的字符串名或无符号整数值。</p>
+<p>.language 伪指令允许用于 .entry 与 .func 函数，且必须出现在函数伪指令与其函数体之间。</p>
+<p>若未指定 .language 伪指令，则语言默认为 "ptx"。</p>
+<p>可为单个函数指定多种语言，表示混合语言来源。语言名不区分大小写。</p>
+<p>以无符号整数指定的语言代码必须在 [0..10] 范围内。字符串名与整数代码的映射如下：</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 27%">
+<col style="width: 73%">
+</colgroup>
+<th>代码</th>
+<th>字符串</th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p>0</p></td>
+<td><p>“unknown”（未知）</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>1</p></td>
+<td><p>保留（Reserved）</p></td>
+</tr>
+<tr class="row-even">
+<td><p>2</p></td>
+<td><p>保留（Reserved）</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>3</p></td>
+<td><p>“ptx”（PTX 汇编本身）</p></td>
+</tr>
+<tr class="row-even">
+<td><p>4</p></td>
+<td><p>“nvvm”（NVVM IR）</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>5</p></td>
+<td><p>“cuda c++”（CUDA C++）</p></td>
+</tr>
+<tr class="row-even">
+<td><p>6</p></td>
+<td><p>“cuda c++ tile”（CUDA C++ Tile）</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>7</p></td>
+<td><p>“tile ir”（Tile IR）</p></td>
+</tr>
+<tr class="row-even">
+<td><p>8</p></td>
+<td><p>“python-cutile”（Python cuTile）</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>9</p></td>
+<td><p>“fortran”（Fortran）</p></td>
+</tr>
+<tr class="row-even">
+<td><p>10</p></td>
+<td><p>“optix”（OptiX）</p></td>
+</tr>
+</tbody>
+</table>
+<p class="rubric">PTX ISA 版本说明</p>
+<p>于 PTX ISA 9.3 引入。</p>
+<p class="rubric">目标 ISA 说明</p>
+<p>所有目标架构均支持。</p>
+<p class="rubric">示例</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>&lt;span&gt;&lt;/span&gt;.entry foo () .language &quot;ptx&quot;                    { ... }
+.func bar ()  .language &quot;nvvm&quot;, &quot;ptx&quot;            { ... }
+.entry baz () .language &quot;ptx&quot;, &quot;cuda c++&quot;, 0x7   { ... }
+</code></pre></div>
+</div>
+</section>
+</section>
+
+</body>
+</html>

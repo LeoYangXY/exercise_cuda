@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 2 章 编程模型（Programming Model）— PTX ISA 中文翻译</title>
+<style>
+  body { font-family: "Noto Sans CJK SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+         line-height: 1.8; color: #1a1a1a; max-width: 920px; margin: 0 auto; padding: 2rem 1.5rem; }
+  h1 { font-size: 2rem; border-bottom: 3px solid #76b900; padding-bottom: .4rem; }
+  h2 { font-size: 1.5rem; margin-top: 2.4rem; border-left: 5px solid #76b900; padding-left: .6rem; }
+  h3 { font-size: 1.2rem; margin-top: 1.6rem; color: #4a4a4a; }
+  p { margin: .8rem 0; text-align: justify; }
+  ul, ol { margin: .6rem 0; padding-left: 1.6rem; }
+  li { margin: .35rem 0; }
+  code { background: #f1f4f1; color: #2e7d32; padding: .1rem .35rem; border-radius: 3px;
+         font-family: "Cascadia Code", "Consolas", monospace; font-size: .92em; }
+  .note { background: #f7fbf0; border: 1px solid #cfe3b0; border-radius: 6px; padding: .8rem 1rem; margin: 1rem 0; font-size: .95em; }
+  .disclaimer { background: #fff8e1; border: 1px solid #ffe082; border-radius: 6px; padding: .9rem 1.1rem;
+                margin: 1.2rem 0; font-size: .92em; color: #6d4c00; }
+  figure { margin: 1.4rem 0; text-align: center; }
+  figure img { max-width: 100%; border: 1px solid #ddd; border-radius: 4px; background: #fff; }
+  figcaption { font-size: .88em; color: #666; margin-top: .5rem; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92em; }
+  th, td { border: 1px solid #ccc; padding: .5rem .7rem; text-align: left; }
+  th { background: #eef5e6; }
+  .term { font-weight: 600; color: #2e7d32; }
+  .en { color: #0050a0; font-style: italic; }
+</style>
+</head>
+<body>
+
+<div class="disclaimer">
+本页由 AI 对照 NVIDIA 官方 PTX ISA 文档翻译，结合 CUDA 背景改写，仅供参考。
+原始文档：NVIDIA Parallel Thread Execution ISA Version 9.3 — Chapter 2 Programming Model。
+</div>
+
+<h1>第 2 章 编程模型（Programming Model）</h1>
+
+<p>本章介绍 PTX 的编程模型：GPU 作为一个高度多线程的协处理器，线程以怎样的层级结构（CTA → cluster → grid）组织，以及数据在怎样的存储层级（state space）中被访问。理解这套模型，是读懂后续指令集与语法的基础。</p>
+
+<div class="note">
+<b>术语对照速查</b><br>
+<code>CTA</code>（Cooperative Thread Array，协作线程数组）—— 对应 CUDA 中的 <b>thread block（线程块）</b>。<br>
+<code>cluster</code>（线程块集群）—— 对应 CUDA 中的 <b>thread block cluster</b>，仅 <code>sm_90</code> 及以上架构支持。<br>
+<code>warp</code>（线程束）—— 32 个线程为一组，以 SIMT 方式同时执行。<br>
+<code>SIMT</code>（Single Instruction, Multiple Thread，单指令多线程）—— GPU 的执行模型。<br>
+<code>grid</code>（网格）—— 一次 kernel 启动所派发的全部线程批次，由 CTA 或 cluster 组成。
+</div>
+
+<h2>2.1 高度多线程的协处理器（A Highly Multithreaded Coprocessor）</h2>
+
+<p>GPU 是一种计算设备，能够并行执行数量极为庞大的线程。它作为主 CPU（或称 <span class="term">host，主机</span>）的协处理器工作：换句话说，那些在主机上运行、具有数据并行特性且计算密集的部分，会被“卸载”到设备上执行。</p>
+
+<p>更精确地说，应用程序中那些会被反复执行、却又彼此独立地处理不同数据的部分，可以被单独抽离成一个 <span class="term">kernel（核函数）</span>，由 GPU 以许多不同的线程并行执行。为了实现这一点，这样的函数会被编译成 PTX 指令集，而生成的 kernel 会在安装时（install time）被翻译成目标 GPU 的原生指令集。</p>
+
+<div class="note">
+<b>CUDA 背景</b>：在 CUDA 里，你写的 <code>__global__</code> 函数就是一个 kernel。用 <code>&lt;&lt;&lt;grid, block&gt;&gt;&gt;</code> 启动它时，CUDA 运行时会把这份 kernel 编译出的 PTX 进一步 JIT 翻译成当前显卡能执行的机器码。PTX 扮演的是“可移植的中间表示”角色。
+</div>
+
+<h2>2.2 线程层级（Thread Hierarchy）</h2>
+
+<p>执行一个 kernel 的那一大批线程，被组织成一个 <span class="term">grid（网格）</span>。一个 grid 由 <b>协作线程数组（CTA）</b> 或 <b>协作线程数组的集群（cluster of CTAs）</b> 构成，如 <a href="#fig1">图 1</a> 与 <a href="#fig2">图 2</a> 所示。<span class="term">协作线程数组（CTA，Cooperative Thread Array）</span>实现的是 CUDA 的 <b>thread block（线程块）</b>；而 cluster 实现的则是 CUDA 的 <b>thread block cluster（线程块集群）</b>。</p>
+
+<div class="note">
+<b>CUDA 背景</b>：你启动 kernel 时写的 <code>dim3 gridDim, dim3 blockDim</code> 分别对应 grid 与 CTA 的维度。从 CUDA 编程视角，PPT 里说的 CTA 就是你熟悉的 block；cluster 是 Hopper（sm_90）之后才引入的、把多个 block 绑定在一起协同工作的机制。
+</div>
+
+<h3>2.2.1 协作线程数组（Cooperative Thread Arrays）</h3>
+
+<p><span class="term">PTX（Parallel Thread Execution，并行线程执行）</span> 编程模型是<b>显式并行</b>的：一份 PTX 程序描述的是并行线程数组中“某一个具体线程”如何执行。所谓 <span class="term">CTA（协作线程数组）</span>，就是一组并发或并行执行同一个 kernel 的线程。</p>
+
+<p>同一个 CTA 内部的线程可以相互通信。为了协调这种通信，可以设定<b>同步点（synchronization point）</b>：线程在此等待，直到 CTA 内所有线程都抵达该点，才继续往下走。</p>
+
+<p>每个线程在 CTA 内部都有一个唯一的线程标识符（thread identifier）。程序采用数据并行分解的方式，把输入、工作和结果分摊到 CTA 的各个线程上。每个 CTA 线程利用自己的线程标识符来确定所承担的角色、指定输入与输出的位置、计算地址并选择要执行的工作。线程标识符是一个三维向量 <code>tid</code>（由 <code>tid.x</code>、<code>tid.y</code>、<code>tid.z</code> 三个分量组成），表示线程在 1D、2D 或 3D 的 CTA 中所处的位置。每个分量取值范围从 0 到该维度上的线程编号上限。</p>
+
+<div class="note">
+<b>CUDA 背景</b>：这里的 <code>tid</code> 就是 CUDA 内建变量 <code>threadIdx</code>，<code>ntid</code> 对应 <code>blockDim</code>。例如 <code>tid.x</code> = <code>threadIdx.x</code>，取值 0 … <code>blockDim.x</code>−1。
+</div>
+
+<p>每个 CTA 本身的形状（1D、2D 或 3D）由一个三维向量 <code>ntid</code>（由 <code>ntid.x</code>、<code>ntid.y</code>、<code>ntid.z</code> 组成）指定，它给出的是 CTA 在每个维度上的线程数量。</p>
+
+<p>CTA 内部的线程以 <span class="term">SIMT（Single-Instruction, Multiple-Thread，单指令多线程）</span> 的方式，按称为 <span class="term">warp（线程束）</span> 的组来执行。一个 <span class="term">warp（线程束）</span> 是来自单个 CTA 的、能同时执行相同指令的线程的最大子集。warp 内的线程是顺序编号的。<b>warp 的大小是一个与具体机器相关的常量，通常一个 warp 包含 32 个线程。</b>部分应用若能获知 warp 大小，便可能借此最大化性能，因此 PTX 提供了一个运行时立即数常量 <code>WARP_SZ</code>，可在任何允许立即数操作数的指令中使用。</p>
+
+<div class="note">
+<b>CUDA 背景</b>：你写的 <code>threadIdx.x</code> 从 0 到 31 的线程，自然属于第 0 个 warp；32–63 属于第 1 个 warp，以此类推。PTX 里的 <code>%tid</code> 就是 <code>threadIdx</code>，<code>WARP_SZ</code> 则相当于 CUDA C++ 里的 <code>warpSize</code> 内建常量。SIMT 与 SIMD 的差别见第 3 章：SIMT 对程序员隐藏了“线程束”这个宽度，你写的是单线程标量代码，由硬件把同 warp 的线程打包执行。
+</div>
+
+<h3>2.2.2 协作线程数组的集群（Cluster of Cooperative Thread Arrays）</h3>
+
+<p><span class="term">cluster（集群）</span> 是一组并发或并行运行的 CTA，它们可以通过<b>共享内存（shared memory）</b>相互同步与通信。正在执行的 CTA 在与对端 CTA 通过共享内存通信之前，必须确保对端 CTA 的共享内存确实存在，且对端 CTA 在完成共享内存操作之前尚未退出。</p>
+
+<p>同一个 cluster 内、不同 CTA 中的线程，可以通过共享内存相互同步与通信。<span class="term">cluster 级的屏障（cluster-wide barrier）</span>可用于同步 cluster 内的所有线程。cluster 中每个 CTA 在其 cluster 内有一个唯一的 CTA 标识符（<code>cluster_ctaid</code>）；每个 CTA 集群的形状（1D、2D 或 3D）由参数 <code>cluster_nctaid</code> 指定；cluster 中每个 CTA 在所有维度上还有一个唯一的 CTA 标识符（<code>cluster_ctarank</code>）；cluster 在所有维度上的 CTA 总数由 <code>cluster_nctarank</code> 指定。线程可以通过预定义、只读的特殊寄存器读取并使用这些值：<code>%cluster_ctaid</code>、<code>%cluster_nctaid</code>、<code>%cluster_ctarank</code>、<code>%cluster_nctarank</code>。</p>
+
+<div class="note">
+<b>CUDA 背景</b>：cluster 这一层级仅在目标架构 <code>sm_90</code>（Hopper）及以上才适用。这些特殊寄存器大致对应 CUDA 的 <code>clusterIdx</code>、<code>clusterDim</code>、<code>clusterId</code> / <code>blockIdx</code> 在集群视角下的变体。CUDA 通过 <code>cudaLaunchKernelEx</code> 配合 <code>clusterDim</code> 显式启动集群。
+</div>
+
+<p>cluster 层级仅在目标架构 <code>sm_90</code> 及以上适用。在启动（launch）时指定 cluster 层级是<b>可选的</b>：若用户在启动时指定了 cluster 维度，则被视为<b>显式集群启动（explicit cluster launch）</b>；否则被视为<b>隐式集群启动（implicit cluster launch）</b>，默认维度为 1×1×1。PTX 提供只读特殊寄存器 <code>%is_explicit_cluster</code> 来区分显式与隐式集群启动。</p>
+
+<h3>2.2.3 集群组成的网格（Grid of Clusters）</h3>
+
+<p>一个 CTA 能容纳的线程数有上限，一个 cluster 能容纳的 CTA 数也有上限。不过，执行同一 kernel 的 CTA 所组成的 cluster，可以被批量打包成一个 <span class="term">集群网格（grid of clusters）</span>，因此单次 kernel 调用所能启动的线程总数可以非常庞大。代价则是线程间的通信与同步能力减弱——<b>不同 cluster 之间的线程无法相互通信与同步</b>。</p>
+
+<p>在一个集群网格中，每个 cluster 拥有唯一的集群标识符（<code>clusterid</code>）；每个集群网格的形状（1D、2D 或 3D）由参数 <code>nclusterid</code> 指定；每个 grid 还有一个唯一的、带时间性的网格标识符（<code>gridid</code>）。线程可以通过预定义、只读的特殊寄存器读取并使用这些值：<code>%tid</code>、<code>%ntid</code>、<code>%clusterid</code>、<code>%nclusterid</code> 和 <code>%gridid</code>。</p>
+
+<div class="note">
+<b>CUDA 背景</b>：这里 <code>%ctaid</code> / <code>%nctaid</code> 对应 CUDA 的 <code>blockIdx</code> / <code>gridDim</code>；<code>%tid</code> / <code>%ntid</code> 对应 <code>threadIdx</code> / <code>blockDim</code>；<code>%clusterid</code> / <code>%nclusterid</code> 则是集群视角下的 <code>clusterIdx</code> / <code>clusterDim</code>。注意 <code>%tid</code> 在 PTX 特殊寄存器里既用于线程标识，文档此处也把它列在 cluster 网格层级上下文中。
+</div>
+
+<p>每个 CTA 在一个 grid 内有唯一的标识符（<code>ctaid</code>）；每个由 CTA 组成的 grid 的形状（1D、2D 或 3D）由参数 <code>nctaid</code> 指定。线程可以通过预定义、只读的特殊寄存器 <code>%ctaid</code> 和 <code>%nctaid</code> 使用并读取这些值。</p>
+
+<p>每个 kernel 都是作为一批线程来执行的，这批线程被组织成一个由 CTA 构成的集群网格（grid of clusters）；其中 cluster 是<b>可选</b>的层级，且仅在目标架构 <code>sm_90</code> 及以上才适用。<a href="#fig1">图 1</a> 展示了一个由 CTA 组成的网格，<a href="#fig2">图 2</a> 展示了一个由 cluster 组成的网格。</p>
+
+<p>grid 之间可以带有相互依赖关系——一个 grid 既可以是<b>依赖网格（dependent grid）</b>，也可以是<b>前提网格（prerequisite grid）</b>。要了解如何定义 grid 间的依赖，请参考 <i>CUDA Programming Guide</i> 中关于 <b>CUDA Graphs</b> 的章节。</p>
+
+<figure id="fig1">
+  <img src="images/ch2_grid_ctas.png" alt="Grid with CTAs">
+  <figcaption>图 1：由 CTA（协作线程数组）组成的网格（Grid with CTAs）。每个方块代表一个 CTA（即 CUDA 的线程块）；多个 CTA 排布成一个 grid。</figcaption>
+</figure>
+
+<figure id="fig2">
+  <img src="images/ch2_grid_clusters.png" alt="Grid with clusters">
+  <figcaption>图 2：由 cluster（线程块集群）组成的网格（Grid with clusters）。每个方块代表一个 cluster，每个 cluster 内含若干个 CTA；cluster 仅 sm_90+ 支持。</figcaption>
+</figure>
+
+<p>cluster 是协作线程数组（CTA）的集合，而 CTA 是执行同一 kernel 程序的并发线程的集合；grid 则是执行相互独立任务的、由 CTA 构成的 cluster 的集合。</p>
+
+<h2>2.3 存储层级（Memory Hierarchy）</h2>
+
+<p>PTX 线程在执行期间可以从多个 <span class="term">state space（状态空间，可理解为不同的内存地址空间）</span> 访问数据，如 <a href="#fig3">图 3</a> 所示（其中 cluster 层级自目标架构 <code>sm_90</code> 起引入）。每个线程拥有私有的 <span class="term">local memory（本地内存）</span>；每个线程块（CTA）拥有<b>共享内存（shared memory）</b>，它对块内所有线程以及 cluster 内所有活跃块都可见，且生命周期与该块一致；最后，所有线程都能访问同一块 <span class="term">global memory（全局内存）</span>。</p>
+
+<figure id="fig3">
+  <img src="images/ch2_memory_hierarchy.png" alt="Memory Hierarchy">
+  <figcaption>图 3：存储层级（Memory Hierarchy）。展示了线程私有本地内存、CTA/cluster 共享内存、全局内存，以及各线程均可访问的常量/参数/纹理/表面等状态空间；自 sm_90 起引入 cluster 层级的内存视图。</figcaption>
+</figure>
+
+<p>除了上述空间，所有线程还可以访问另一些状态空间：<code>constant</code>（常量）、<code>param</code>（参数）、<code>texture</code>（纹理）和 <code>surface</code>（表面）状态空间。<b>常量内存与纹理内存是只读的；表面内存可读也可写。</b>全局、常量、参数、纹理和表面这几种状态空间针对不同的内存使用方式做了优化。例如纹理内存提供了不同的寻址模式，以及针对特定数据格式的数据过滤。需要注意：纹理和表面内存是带缓存的，而在<b>同一次 kernel 调用内</b>，该缓存相对于全局内存写入和表面内存写入并<b>不保持一致性（coherent）</b>——因此，若某个地址在同一次 kernel 调用中已被全局写入或表面写入改写过，再对它做纹理读取或表面读取，将返回<b>未定义的数据</b>。换句话说，线程只有在该内存位置已被<b>上一次 kernel 调用</b>或内存拷贝更新过时，才能安全地读取它；若它是由同一次 kernel 调用中的本线程或其他线程刚写入的，则不可安全读取。</p>
+
+<div class="note">
+<b>CUDA 背景</b>：这正是 CUDA 里“纹理/表面缓存不与全局内存写操作自动一致”的经典坑。写后读（write-then-read）同一地址走纹理路径会得到陈旧或无效值。跨 kernel 调用时全局、常量、纹理状态空间是持久的；同一 kernel 内则要避免依赖这种缓存一致性。
+</div>
+
+<p>全局、常量和纹理状态空间在由同一应用发起的多次 kernel 启动之间是<b>持久（persistent）</b>的。</p>
+
+<p>主机和设备各自维护自己的本地内存，分别称为 <span class="term">host memory（主机内存）</span> 与 <span class="term">device memory（设备内存）</span>。设备内存既可以被主机映射（map）后进行读写，也可以通过利用设备高性能 <span class="term">DMA（Direct Memory Access，直接内存访问）</span> 引擎的优化 API 调用，从主机内存拷贝过去，以实现更高效的传输。</p>
+
+<hr>
+<p style="font-size:.85em;color:#888;">本文档译自 NVIDIA Parallel Thread Execution ISA Version 9.3，第 2 章 Programming Model。图 1–3 取自官方文档对应 SVG/PNG 资源。仅供学习参考，如与官方原文冲突，以原文为准。</p>
+
+</body>
+</html>

@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 8 章 内存一致性模型（PTX ISA 中文翻译）</title>
+<style>
+  :root { --fg:#1a1a1a; --bg:#ffffff; --accent:#76b900; --code-bg:#f5f7f2; --border:#d9e0cf; --note-bg:#fff8e1; }
+  * { box-sizing:border-box; }
+  body { font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; color:var(--fg); background:var(--bg); line-height:1.75; margin:0; padding:0; }
+  .disclaimer { background:var(--accent); color:#102; padding:10px 20px; font-size:14px; text-align:center; font-weight:600; }
+  .wrap { max-width:920px; margin:0 auto; padding:24px 20px 80px; }
+  h1 { font-size:30px; border-bottom:3px solid var(--accent); padding-bottom:10px; margin-top:28px; }
+  h2 { font-size:24px; margin-top:40px; color:#3a4a1f; border-left:6px solid var(--accent); padding-left:12px; }
+  h3 { font-size:19px; margin-top:30px; color:#4a5a28; }
+  h4 { font-size:16px; margin-top:22px; color:#5a6a35; }
+  p { margin:12px 0; }
+  ul,ol { margin:10px 0; padding-left:24px; }
+  li { margin:6px 0; }
+  code { background:var(--code-bg); border:1px solid var(--border); border-radius:4px; padding:1px 5px; font-family:Consolas,Menlo,monospace; font-size:0.92em; }
+  pre { background:#1e1e1e; color:#e6e6e6; padding:1em 1.2em; border-radius:6px; overflow-x:auto; }
+  pre code { background:none; border:none; color:inherit; padding:0; }
+  table { border-collapse:collapse; width:100%; margin:16px 0; font-size:14px; }
+  th,td { border:1px solid var(--border); padding:8px 10px; text-align:left; }
+  th { background:var(--code-bg); }
+  .term { border-bottom:1px dotted #888; cursor:help; }
+  a { color:#2a6e00; }
+</style>
+</head>
+<body>
+<div class="disclaimer">本页由 AI 对照 NVIDIA 官方 PTX ISA 文档翻译，结合 CUDA 背景改写，仅供参考</div>
+<div class="wrap">
+<h1>第 8 章　内存一致性模型（Memory Consistency Model）</h1>
+<p>在多线程执行中，每个线程所执行的内存操作的"副作用"（side-effect），对其他线程而言是以一种局部且各不相同的顺序变得可见的。这意味着：任意两个操作，在不同线程看来，可能表现为"没有顺序关系"，也可能表现为"不同的先后顺序"。由<span class="term" title="公理精确规定了不同线程观察到的内存操作顺序之间哪些矛盾是被禁止的">memory consistency model（内存一致性模型）</span>所引入的一系列公理，精确规定了不同线程观察到的操作顺序之间，哪些矛盾是被禁止的。</p>
+<p>在没有任何约束的情况下，每个读操作都会返回"某个对同一个内存位置执行过写操作并提交的值"——包括对该内存位置的初始写。内存一致性模型实质上约束了"读操作可以从中取值的候选写操作集合"。</p>
+<p><strong>为什么 GPU 要用<span class="term" title="GPU 为追求性能，允许 store/load 在跨线程可见性上被重排">weak/relaxed memory model（弱内存模型）</span>？</strong>　GPU 拥有成千上万个并发线程，硬件为了吞吐量与延迟隐藏，会积极地重排、缓冲、延迟内存访问的全局可见性。若强制顺序一致（sequential consistency），会严重拖慢执行。因此 PTX 采用<span class="term" title="GPU 为追求性能，允许 store/load 在跨线程可见性上被重排">weak/relaxed memory model（弱内存模型）</span>：默认情况下线程间不保证写操作的立即可见与顺序，只有显式使用<span class="term" title="保证内存访问的可见性与顺序，对应 PTX 的 fence / membar 指令">fence / membar（内存屏障）</span>（如 <code>fence</code> / <code>membar</code>）或带序修饰符（<code>.release</code> / <code>.acquire</code>）的指令，才建立跨线程的同步关系。这也正是 CUDA C++ 中 <code>__threadfence()</code> / <code>__threadfence_block()</code> 的底层语义来源。</p>
+<h2>8.1　模型的作用域与适用条件（Scope and applicability of the model）</h2>
+<p>本模型所规定的约束，适用于任意 PTX ISA 版本号、运行在 <code>sm_70</code> 或更高架构上的 PTX 程序。</p>
+<p>该内存一致性模型不适用于纹理（包括 <code>ld.global.nc</code>）与表面（surface）访问。</p>
+<h3>8.1.1　系统作用域下原子性的限制（Limitations on atomicity at system scope）</h3>
+<p>当与主机 CPU 通信时，某些系统作用域（system scope）的强操作（strong operation）在某些系统上可能无法以原子方式执行。关于对主机内存原子性保证的更多细节，请参见 <em>CUDA Atomicity Requirements</em>。</p>
+<h2>8.2　内存操作（Memory operations）</h2>
+<p>PTX 内存模型中的基本存储单元是一个字节（byte），由 8 位组成。PTX 程序可用的每个状态空间（state space）都是内存中一段连续的字节序列。PTX 状态空间中的每个字节，对所有能够访问该状态空间的线程而言，都拥有唯一地址。</p>
+<p>每条 PTX 内存指令都指定一个地址操作数和一个数据类型。地址操作数包含一个虚拟地址（virtual address），在内存访问过程中被转换为物理地址（physical address）。物理地址与数据类型的大小共同定义了一个物理内存位置（physical memory location）——即从物理地址开始、长度延伸至数据类型字节大小的一段字节范围。类似地，地址操作数与数据类型大小共同定义了该内存操作所访问的虚拟内存地址范围。</p>
+<p>内存一致性模型的规范中，术语"地址"（address / memory address）指虚拟地址，术语"内存位置"（memory location）指物理内存位置。</p>
+<p>每条 PTX 内存指令还指定了要在对应内存位置的所有字节上执行的操作——读（read）、写（write）或原子读-改-写（atomic read-modify-write）。</p>
+<h3>8.2.1　重叠（Overlap）</h3>
+<p>当两个内存位置中，其中一个的起始地址落在另一个位置所占的字节范围内时，称这两个内存位置"重叠"。当两个内存操作所访问的虚拟地址范围相交时，称这两个内存操作"重叠"。若两个内存位置完全相同，则称重叠为"完全重叠"（complete）；否则为"部分重叠"（partial）。</p>
+<h3>8.2.2　别名（Aliases）</h3>
+<p>若两个不同的虚拟地址映射到同一个内存位置，则称它们互为"别名"（aliases）。</p>
+<h3>8.2.3　多内存地址（Multimem Addresses）</h3>
+<p>多内存地址（multimem address）是一个指向跨设备多个不同内存位置的虚拟地址。</p>
+<p>只有在 multimem 地址上执行 <code>multimem.*</code> 操作才是合法的。换言之，在任何其他内存操作中访问 multimem 地址，其行为是未定义的（undefined）。</p>
+<h3>8.2.4　向量数据类型上的内存操作（Memory Operations on Vector Data Types）</h3>
+<p>内存一致性模型将"在标量数据类型（最大尺寸与对齐均为 64 位）的内存位置上执行的操作"关联起来。向量数据类型的内存操作被建模为一组等价的标量数据类型内存操作，按未指定顺序作用于向量中的各个元素。</p>
+<h3>8.2.5　打包数据类型上的内存操作（Memory Operations on Packed Data Types）</h3>
+<p>打包数据类型（packed data type）由两个相同标量数据类型的值组成（见 Packed Data Types 一节）。这些值被存放在相邻的内存位置中。对打包数据类型的内存操作被建模为一对等价的标量数据类型内存操作，按未指定顺序作用于打包数据的每个元素。</p>
+<h3>8.2.6　初始化（Initialization）</h3>
+<p>内存中的每个字节，都由程序启动任何线程之前执行的一个假想写操作 W0 完成初始化。若该字节属于某个程序变量，且该变量有初值，则 W0 向该字节写入对应的初值；否则假定 W0 向该字节写入了一个未知但恒定的值。</p>
+<h2>8.3　状态空间（State spaces）</h2>
+<p>内存一致性模型中定义的关系与状态空间无关。特别是，因果序（causality order）覆盖所有状态空间上的全部内存操作。但是，某个状态空间中的内存操作的副作用，只能被同样能够访问该状态空间的操作直接观察到。除作用域（scope）之外，这进一步约束了内存操作的同步效果。例如，PTX 指令 <code>ld.relaxed.shared.sys</code> 的同步效果与 <code>ld.relaxed.shared.cluster</code> 完全相同，因为同一 cluster 之外的线程无法执行访问同一内存位置的操作。</p>
+<h2>8.4　操作类型（Operation types）</h2>
+<p>为简洁起见，文档其余部分使用下列操作类型来指代，而不逐一列举产生这些操作的具体指令。</p>
+<table>
+<caption>表 20　操作类型（Operation Types）</caption>
+<thead><tr><th>操作类型</th><th>指令 / 操作</th></tr></thead>
+<tbody>
+<tr><td>原子操作（atomic operation）</td><td><code>atom</code> 或 <code>red</code> 指令。</td></tr>
+<tr><td>读操作（read operation）</td><td><code>ld</code> 指令的所有变体，以及 <code>atom</code> 指令（但 <code>red</code> 指令除外）。</td></tr>
+<tr><td>写操作（write operation）</td><td><code>st</code> 指令的所有变体；以及若结果产生一次写，则原子操作也算写操作。</td></tr>
+<tr><td>内存操作（memory operation）</td><td>一次读操作或写操作。</td></tr>
+<tr><td>易失操作（volatile operation）</td><td>带 <code>.volatile</code> 修饰符的指令。</td></tr>
+<tr><td>获取操作（acquire operation）</td><td>带 <code>.acquire</code> 或 <code>.acq_rel</code> 修饰符的内存操作。</td></tr>
+<tr><td>释放操作（release operation）</td><td>带 <code>.release</code> 或 <code>.acq_rel</code> 修饰符的内存操作。</td></tr>
+<tr><td>mmio 操作（mmio operation）</td><td>带 <code>.mmio</code> 修饰符的 <code>ld</code> 或 <code>st</code> 指令。</td></tr>
+<tr><td>内存屏障操作（memory fence operation）</td><td><code>membar</code>、<code>fence.sc</code> 或 <code>fence.acq_rel</code> 指令。</td></tr>
+<tr><td>代理屏障操作（proxy fence operation）</td><td><code>fence.proxy</code> 或 <code>membar.proxy</code> 指令。</td></tr>
+<tr><td>强操作（strong operation）</td><td>内存屏障操作，或带 <code>.relaxed</code>、<code>.acquire</code>、<code>.release</code>、<code>.acq_rel</code>、<code>.volatile</code> 或 <code>.mmio</code> 修饰符的内存操作。</td></tr>
+<tr><td>弱操作（weak operation）</td><td>带 <code>.weak</code> 修饰符的 <code>ld</code> 或 <code>st</code> 指令。</td></tr>
+<tr><td>同步操作（synchronizing operation）</td><td>屏障（barrier）指令、屏障（fence）操作、释放操作或获取操作。</td></tr>
+</tbody></table>
+<h3>8.4.1　mmio 操作</h3>
+<p>mmio 操作是指定 <code>.mmio</code> 修饰符的内存操作。它通常作用于映射到对端 I/O 设备控制寄存器的内存位置。它也可用于线程间通信，但相对于非 mmio 操作性能较差。</p>
+<p>mmio 操作的语义含义无法被精确定义，因为它由底层的 I/O 设备决定。从内存一致性模型的角度出发，mmio 操作的语义形式化等价于一个强操作的语义。但在满足指定作用域下 CUDA 原子性要求的前提下，它遵循若干实现相关的特性：</p>
+<ul><li>写操作总是被执行，且在指定作用域内不会被合并（combined）。</li><li>读操作总是被执行，且不会被转发（forwarded）、预取（prefetched）、合并（combined），也不允许命中指定作用域内的任何缓存。</li><li>作为例外：在某些实现中，可能同时加载其周边位置。这种情况下加载的数据量是实现相关的，大小在 32 到 128 字节之间浮动。</li></ul>
+<h3>8.4.2　volatile 操作</h3>
+<p>volatile 操作是指定 <code>.volatile</code> 修饰符的内存操作。volatile 操作的语义等价于"系统作用域下 relaxed 的内存操作"，但带有以下额外的实现相关约束：</p>
+<ul><li>程序所执行的 volatile 指令（注意是"指令"而非"操作"）的数量被保留。硬件可能合并由多个不同 volatile 指令发出的 volatile 操作——也就是说，程序中 volatile 操作的数量不被保留。</li><li>volatile 指令不会绕到其他 volatile 指令周围重排，但这些指令所执行的内存操作之间可能被相互重排。</li></ul>
+<div class="note"><strong>注意</strong>　PTX 的 volatile 操作旨在供编译器将来自 CUDA C++（以及共享 CUDA C++ volatile 语义的其他编程语言）的 volatile 读写 lowering 为 PTX。由于 volatile 操作本质上是系统作用域下带额外约束的 relaxed 操作，建议在线程间同步时改用其他强读 / 强写操作（例如 <code>ld.relaxed.sys</code> 或 <code>st.relaxed.sys</code>），可能获得更好性能。PTX volatile 操作不适合用于内存映射 I/O（MMIO），因为它不保留所执行内存操作的数量，可能以非确定方式执行多于或少于请求的操作次数。请改用 <code>.mmio</code> 操作，它会严格保留所执行操作的数量。</div>
+<h2>8.5　作用域（Scope）</h2>
+<p>每个强操作都必须指定一个<span class="term" title="指定一组可直接交互并建立内存一致性关系的线程：.cta/.cluster/.gpu/.sys">scope（作用域）</span>（scope），即一组可能直接与该操作交互、并能建立内存一致性模型中描述的任何一种关系的线程。共有四种作用域：</p>
+<table>
+<caption>表 21　作用域（Scopes）</caption>
+<thead><tr><th>作用域</th><th>描述</th></tr></thead>
+<tbody>
+<tr><td><code>.cta</code></td><td>与当前线程执行于同一 CTA（线程块）内的所有线程集合。</td></tr>
+<tr><td><code>.cluster</code></td><td>与当前线程执行于同一 cluster（线程块簇）内的所有线程集合。</td></tr>
+<tr><td><code>.gpu</code></td><td>当前程序中、与当前线程运行于同一计算设备的所有线程集合。也包括主机程序在同一计算设备上调用的其他 kernel grid。</td></tr>
+<tr><td><code>.sys</code></td><td>当前程序中的所有线程集合，包括主机程序在所有计算设备上调用的所有 kernel grid，以及构成主机程序本身的所有线程。</td></tr>
+</tbody></table>
+<p>注意：warp 不是一个作用域；在内存一致性模型中，CTA 才是够格作为作用域的最小线程集合。</p>
+<h2>8.6　代理（Proxies）</h2>
+<p>内存代理（memory proxy，简称 proxy）是一个应用于某种内存访问方法的抽象标签。当两个内存操作使用不同的内存访问方法时，称它们是不同的代理（proxy）。</p>
+<p>跨不同代理同步内存操作需要一个代理屏障（proxy fence）。尽管虚拟别名（virtual alias）使用通用的内存访问方法，但由于使用不同的虚拟地址表现得"如同使用不同代理"，因此它们需要一个代理屏障来建立内存顺序。</p>
+<p>除非另有说明，操作类型（Operation types）一节中定义的内存操作使用通用的内存访问方法，即通用代理（generic proxy）。使用区别于通用方法的访问方法的操作包括：</p>
+<ul><li>纹理与表面访问；</li><li>通过同一代理、使用不同虚拟内存地址访问同一位置；</li><li><code>.async.bulk</code> 操作带来的 async-proxy 与 tensormap-proxy 访问；</li><li>fabric 操作带来的 fabric-proxy 访问。</li></ul>
+<h3>8.6.1　强代理访问（Strong Proxy Accesses）</h3>
+<p>通过以下代理的强修改（strong modification）：</p>
+<ul><li>generic-proxy（通用代理），</li><li>async-proxy，</li><li>tensormap-proxy，</li><li>fabric-proxy，</li></ul>
+<p>最终能够通过该列表中"不同代理"对同一位置执行的强访问观察到，前提是修改与访问满足：</p>
+<ul><li>系统作用域（system-scope）——即使它们使用了不同的内存地址；或</li><li>GPU 作用域（gpu-scope），且所涉及的代理属于下列列表： async-proxy、generic-proxy。</li></ul>
+<h2>8.7　道德强操作（Morally strong operations）</h2>
+<p>当两个操作满足以下所有条件时，称它们彼此"道德强"（morally strong）：</p>
+<ul><li>这两个操作在程序序（program order）上相关（即都由同一线程执行）；或者每个操作都是强操作，且指定的作用域包含执行另一操作的线程。</li><li>两个操作都通过同一代理执行。</li><li>若两者都是内存操作，则它们完全重叠（overlap completely）。</li></ul>
+<p>内存一致性模型中的大多数（但不是全部）公理，都依赖于道德强操作之间的关系。</p>
+<h3>8.7.1　冲突与数据竞争（Conflict and Data-races）</h3>
+<p>当两个重叠的内存操作中至少有一个是写操作时，称它们"冲突"（conflict）。</p>
+<p>当两个冲突的内存操作既不在因果序（causality order）上相关，也不是道德强（morally strong）时，称它们处于"数据竞争"（data-race）之中。</p>
+<h3>8.7.2　混合尺寸数据竞争的限制（Limitations on Mixed-size Data-races）</h3>
+<p>完全重叠操作之间的数据竞争称为"同尺寸数据竞争"（uniform-size data-race），而部分重叠操作之间的数据竞争称为"混合尺寸数据竞争"（mixed-size data-race）。</p>
+<p>如果某 PTX 程序包含一个或多个混合尺寸数据竞争，内存一致性模型中的公理将不再适用。但这些公理足以描述"仅含同尺寸数据竞争"的 PTX 程序的行为。</p>
+<h4>混合尺寸 RMW 操作的原子性（Atomicity of mixed-size RMW operations）</h4>
+<p>在任何含或不含混合尺寸数据竞争的程序中，对每一对重叠的原子操作 A1 与 A2（且各自指定的作用域包含对方），以下性质成立：要么 A1 所规定的读-改-写操作在 A2 启动之前完整执行，要么反之。无论 A1 与 A2 是部分重叠还是完全重叠，该性质均成立。</p>
+<h2>8.8　释放与获取模式（Release and Acquire Patterns）</h2>
+<p>某些指令序列会产生参与内存同步的模式（详见后文）。释放（release）模式使当前线程此前的操作<sup>1</sup>对其他线程的某些操作可见。获取（acquire）模式使其他线程的某些操作对当前线程此后的操作可见。<span class="term" title="配对使用可在线程间建立因果序（causality order），实现同步">release/acquire（释放/获取语义）</span>是这类模式的核心。</p>
+<p>位于位置 M 上的一个释放模式，由以下之一组成：</p>
+<ul><li>在 M 上的一个释放操作。例如：<code>st.release [M];</code> 或 <code>atom.release [M];</code> 或 <code>mbarrier.arrive.release [M];</code></li><li>或在程序序上，一个释放 / 获取-释放操作后跟一个对 M 的强写。例如：<code>st.release [M]; st.relaxed [M];</code></li><li>或在程序序上，一个释放 / 获取-释放的内存屏障后跟一个对 M 的强写。例如：<code>fence.release; st.relaxed [M];</code> 或 <code>fence.release; atom.relaxed [M];</code></li><li>或在程序序上，一个释放 / 获取-释放的内存屏障后跟一个对 M 执行强写的异步操作。例如：<code>fence.release; cp.async.bulk.global.shared.relaxed.sys.b128 [M];</code></li><li>或一个对 M 执行强写的释放异步操作。例如：<code>st.async.release.sys [M];</code></li></ul>
+<p>释放模式所建立的任何内存同步，仅影响该模式第一条指令之前、程序序上的操作。</p>
+<p>位于位置 M 上的一个获取模式，由以下之一组成：</p>
+<ul><li>在 M 上的一个获取操作。例如：<code>ld.acquire [M];</code> 或 <code>atom.acquire [M];</code> 或 <code>mbarrier.test_wait.acquire [M];</code></li><li>或在程序序上，一个对 M 的强读后跟一个对 M 的获取操作。例如：<code>ld.relaxed [M]; ld.acquire [M];</code></li><li>或在程序序上，一个对 M 的强读后跟一个获取内存屏障。例如：<code>ld.relaxed [M]; fence.acquire;</code> 或 <code>atom.relaxed [M]; fence.acquire;</code></li><li>或先观察到某个对 M 执行强读的异步操作的完成，然后该观察在程序序上后跟一个获取内存屏障。例如：</li></ul>
+<pre><code>cp.async.bulk.mbarrier::complete_tx::bytes.relaxed.sys.b128 [dst], [M], size, [barrier]; // 对 M 的强读
+mbarrier.try_wait.relaxed p, [barrier];  // 观察到执行对 M 强读的异步操作完成
+@p fence.acquire; // 在观察到完成之后、程序序上的获取屏障</code></pre>
+<p>获取模式所建立的任何内存同步，仅影响该模式最后一条指令之后、程序序上的操作。</p>
+<div class="note"><strong>注意</strong>　虽然原子归约（atomic reduction）在概念上作为其读-改-写序列的一部分执行了一次强读，但这条强读并不构成获取模式。例如：<code>red.add [M], 1; fence.acquire;</code> 不是一个获取模式。</div>
+<p><sup>1</sup> 对于释放与获取模式，该效果通过因果序的传递性进一步扩展到其他线程的操作。</p>
+<h2>8.9　内存操作的排序（Ordering of memory operations）</h2>
+<p>每个线程执行的操作序列被记录为程序序（program order），而跨线程的内存同步被记录为因果序（causality order）。内存操作副作用对其他内存操作的可见性被记录为通信序（communication order）。内存一致性模型定义了"通信序"与"因果序和程序序"之间所禁止的矛盾。</p>
+<h3>8.9.1　程序序（Program Order）</h3>
+<p>程序序将一个线程执行的所有操作，关联到对应 PTX 源码中顺序处理器执行指令的次序。它是一个传递关系，在该线程所执行的操作上构成全序（total order），但不关联来自不同线程的操作。</p>
+<h4>8.9.1.1　异步操作（Asynchronous Operations）</h4>
+<p>某些 PTX 指令（<code>cp.async</code>、<code>cp.async.bulk</code>、<code>cp.reduce.async.bulk</code>、<code>wgmma.mma_async</code> 的所有变体）执行相对于执行该指令的线程而言是异步的操作。这些异步操作被排在"同一线程中先前指令"之后（<code>wgmma.mma_async</code> 除外），但它们不属于该线程程序序的一部分。相反，它们提供指令描述中所记载的更弱的排序保证。</p>
+<p>例如，作为 <code>cp.async</code> 一部分执行的加载与存储彼此之间是有序的，但不与同一线程发起的任何其他 <code>cp.async</code> 指令有序，也不与该线程随后发出的任何其他指令有序——除非是 <code>cp.async.commit_group</code> 或 <code>cp.async.mbarrier.arrive</code>。由 <code>cp.async.mbarrier.arrive</code> 指令执行的异步 mbarrier arrive-on 操作，与同一线程发起的所有先前 <code>cp.async</code> 操作所执行的内存操作有序，但不与该线程发出的任何其他指令有序。<code>cp.async.bulk</code> 与 <code>cp.reduce.async.bulk</code> 所有变体所隐含的 mbarrier complete-tx 操作，仅与同一异步指令所执行的内存操作有序，特别地，它不会传递式地对该发起线程的先前指令建立顺序。</p>
+<h3>8.9.2　观察序（Observation Order）</h3>
+<p>观察序（observation order）通过一个可选的原子读-改-写操作序列，将一个写 W 与一个读 R 关联起来。</p>
+<p>当满足以下条件时，称写 W 在观察序上先于读 R：</p>
+<ul><li>R 与 W 道德强（morally strong），且 R 读取了 W 所写入的值；或</li><li>存在某原子操作 Z，使得 W 在观察序上先于 Z，且 Z 在观察序上先于 R。</li></ul>
+<h3>8.9.3　Fence-SC 序（Fence-SC Order）</h3>
+<p>Fence-SC 序是一个在运行时确定的、无环的偏序（acyclic partial order），它关联每一对道德强的 <code>fence.sc</code> 操作。</p>
+<h3>8.9.4　内存同步（Memory synchronization）</h3>
+<p>不同线程执行的同步操作在运行时按此处描述的方式彼此同步。这种同步的效果是在线程间建立因果序。</p>
+<ul><li>若 <code>fence.sc</code> 操作 X 在 Fence-SC 序上先于 <code>fence.sc</code> 操作 Y，则 X 与 Y 同步。</li><li><code>bar{.cta}.sync</code> 或 <code>bar{.cta}.red</code> 或 <code>bar{.cta}.arrive</code> 操作，与在同一屏障上执行的 <code>bar{.cta}.sync</code> 或 <code>bar{.cta}.red</code> 操作同步。</li><li><code>barrier.cluster.arrive</code> 操作与 <code>barrier.cluster.wait</code> 操作同步。</li><li>若释放模式 X 中的某个写操作在观察序上先于获取模式 Y 中的某个读操作，且 X 的第一条操作与 Y 的最后一条操作道德强，则释放模式 X 与获取模式 Y 同步。</li></ul>
+<h4>API 同步（API synchronization）</h4>
+<p>"同步"（synchronizes）关系也可由某些 CUDA API 建立。</p>
+<ul><li>在 CUDA 流（stream）中入队（enqueue）的任务完成时，与该流中随后的任务开始同步（若有）。</li><li>为此，在流中记录（record）或等待（wait）一个 CUDA 事件，或因 <code>cudaStreamLegacy</code> 导致插入跨流屏障，都会在该关联流中入队任务，即使没有直接副作用。事件记录任务与匹配的事件等待任务同步，屏障到达任务与匹配的屏障等待任务同步。</li><li>CUDA kernel 的开始与 kernel 中所有线程的开始同步。kernel 中所有线程的结束与 kernel 的结束同步。</li><li>CUDA 图的开始与图中所有源节点的开始同步。CUDA 图中所有汇节点（sink node）的完成与图的完成同步。图节点的完成与所有直接依赖节点的开始同步。</li><li>入队任务的 CUDA API 调用的开始与该任务的开始同步。</li><li>写入流的最后一个任务（若有）的完成与 <code>cudaStreamSynchronize</code> 的返回同步。最近入队的匹配事件记录任务（若有）的完成与 <code>cudaEventSynchronize</code> 的返回同步。同步一个 CUDA 设备或上下文，表现得如同同步该上下文中所有流（包括已销毁的流）。</li><li>从查询 CUDA 句柄（如流或事件）的 API 返回 <code>cudaSuccess</code>，行为与从匹配的同步 API 返回相同。</li></ul>
+<p>除建立同步关系外，上述 CUDA API 同步机制还参与"代理保留的基因果序"（proxy-preserved base causality order），但 tensormap-proxy 例外——它在 CUDA kernel 开始时并未从 generic-proxy 获取，因此需要在需要时显式用 <code>fence.proxy.tensormap::generic.acquire</code> 获取。</p>
+<h3>8.9.5　因果序（Causality Order）</h3>
+<p>因果序刻画了内存操作如何通过同步操作跨线程变得可见。公理"Causality"利用该顺序约束读操作可从中读取值的写操作集合。</p>
+<p>因果序中的关系主要由"基因果序"<sup>1</sup>（base causality order）中的关系构成，基因果序是一个在运行时确定的传递序。</p>
+<h4>基因果序（Base causality order）</h4>
+<p>当满足以下条件时，称操作 X 在基因果序上先于操作 Y：</p>
+<ul><li>X 在程序序上先于 Y；或</li><li>X 与 Y 同步（synchronizes with）；或</li><li>存在某操作 Z：</li><li>X 在程序序上先于 Z，且 Z 在基因果序上先于 Y；或</li><li>X 在基因果序上先于 Z，且 Z 在程序序上先于 Y；或</li><li>X 在基因果序上先于 Z，且 Z 在基因果序上先于 Y。</li></ul>
+<h4>代理保留的基因果序（Proxy-preserved base causality order）</h4>
+<p>当 X 在基因果序上先于 Y，且满足以下条件时，称内存操作 X 在代理保留的基因果序上先于内存操作 Y：</p>
+<ul><li>X 与 Y 使用通用代理（generic proxy）作用于同一地址；或</li><li>X 与 Y 使用同一代理、由同一线程块作用于同一地址；或</li><li>X 与 Y 互为别名，且从 X 到 Y 的基因果路径上存在一个别名代理屏障（alias proxy fence）。</li></ul>
+<h4>因果序（Causality order）</h4>
+<p>因果序将基因果序与某些非传递关系组合如下：</p>
+<p>当满足以下条件时，称操作 X 在因果序上先于操作 Y：</p>
+<ul><li>X 在代理保留的基因果序上先于 Y；或</li><li>存在某操作 Z，X 在观察序上先于 Z，且 Z 在代理保留的基因果序上先于 Y。</li></ul>
+<p><sup>1</sup> 基因果序的传递性体现了同步操作的"累积性"（cumulativity）。</p>
+<h3>8.9.6　相干序（Coherence Order）</h3>
+<p>存在一个在运行时确定的、传递的偏序，称为相干序（coherence order）<sup>1</sup>，它关联重叠的写操作。两个重叠的写操作，若它们道德强或在因果序上相关，则在相干序上相关。两个重叠的写若处于数据竞争中，则在相干序上无关——这正是相干序呈"偏序"的原因。</p>
+<p><sup>1</sup> 相干序无法被直接观察，因为它完全由写操作构成。它只能通过"约束读操作可从中读取的候选写集合"这一用途被间接观察。</p>
+<h3>8.9.7　通信序（Communication Order）</h3>
+<p>通信序是一个在运行时确定的、非传递的序，它关联写操作与其他重叠的内存操作。</p>
+<ul><li>若读 R 返回了 W 所写入的任意字节的值，则写 W 在通信序上先于重叠的读 R。</li><li>若 W 在相干序上先于写 W&prime;，则写 W 在通信序上先于写 W&prime;。</li><li>若对于 R 与 W 共同访问的任意字节，R 返回了"在相干序上先于 W 的写 W&prime;"所写入的值，则读 R 在通信序上先于重叠的写 W。</li></ul>
+<p>通信序刻画了内存操作的可见性——当内存操作 X1 在通信序上先于内存操作 X2 时，称 X1 对 X2"可见"（visible）。</p>
+<h2>8.10　公理（Axioms）</h2>
+<h3>8.10.1　相干（Coherence）</h3>
+<p>若写 W 在因果序上先于重叠的写 W&prime;，则 W 必须在相干序上先于 W&prime;。</p>
+<h3>8.10.2　Fence-SC</h3>
+<p>Fence-SC 序不能与因果序矛盾。对于一对道德强的 <code>fence.sc</code> 操作 F1 与 F2，若 F1 在因果序上先于 F2，则 F1 必须在 Fence-SC 序上先于 F2。</p>
+<h3>8.10.3　原子性（Atomicity）</h3>
+<h4>单副本原子性（Single-Copy Atomicity）</h4>
+<p>冲突的道德强操作用单副本原子性（single-copy atomicity）执行。当读 R 与写 W 道德强时，对于 R 与 W 共同访问的字节集合，同一次执行中不能同时存在以下两种通信：</p>
+<ul><li>R 从 W 读取任意字节。</li><li>R 从任意"在相干序上先于 W 的写 W&prime;"读取任意字节。</li></ul>
+<h4>读-改-写（RMW）操作的原子性（Atomicity of read-modify-write operations）</h4>
+<p>当原子操作 A 与写 W 重叠且道德强时，对于 A 与 W 共同访问的字节集合，同一次执行中不能同时存在以下两种通信：</p>
+<ul><li>A 从"在相干序上先于 W 的写 W&prime;"读取任意字节。</li><li>A 在相干序上跟随 W。</li></ul>
+<p>Litmus Test 1（公理性测试 1）</p>
+<table>
+<caption>Litmus Test 1</caption>
+<thead><tr><th>T1</th><th>T2</th></tr></thead>
+<tbody>
+<tr><td><pre><code>.global .u32 x = 0;
+
+A1: atom.sys.inc.u32 %r0, [x];</code></pre></td>
+<td><pre><code>A2: atom.sys.inc.u32 %r0, [x];</code></pre></td></tr>
+<tr><td colspan="2">最终状态（FINAL STATE）：x == 2</td></tr>
+</tbody></table>
+<p>当操作道德强时，原子性得到保证。</p>
+<p>Litmus Test 2（公理性测试 2）</p>
+<table>
+<caption>Litmus Test 2</caption>
+<thead><tr><th>T1</th><th>T2（位于不同 CTA）</th></tr></thead>
+<tbody>
+<tr><td><pre><code>.global .u32 x = 0;
+
+A1: atom.cta.inc.u32 %r0, [x];</code></pre></td>
+<td><pre><code>A2: atom.gpu.inc.u32 %r0, [x];</code></pre></td></tr>
+<tr><td colspan="2">最终状态（FINAL STATE）：x == 1 或 x == 2</td></tr>
+</tbody></table>
+<p>若操作不是道德强，则原子性不被保证。</p>
+<h3>8.10.4　无中生有（No Thin Air）</h3>
+<p>值不得"无中生有"（out of thin air）：一次执行不能投机地产生某个值，从而通过指令依赖链与线程间通信使该投机自我满足。这与程序员的直觉和硬件现实一致，但在做形式化分析时有必要显式说明。</p>
+<h4>Litmus Test：带真实依赖的加载缓冲（Load Buffering with true dependencies）</h4>
+<table>
+<caption>Litmus Test: LB+deps</caption>
+<thead><tr><th>T1</th><th>T2</th></tr></thead>
+<tbody>
+<tr><td><pre><code>.global .u32 x = 0;
+.global .u32 y = 0;
+
+A1: ld.global.u32 %r0, [x];
+B1: st.global.u32 [y], %r0;</code></pre></td>
+<td><pre><code>A2: ld.global.u32 %r1, [y];
+B2: st.global.u32 [x], %r1;</code></pre></td></tr>
+<tr><td colspan="2">最终状态（FINAL STATE）：x == 0 且 y == 0</td></tr>
+</tbody></table>
+<p>名为"LB+deps"（带依赖的加载缓冲）的 litmus test，检验了这种可能"无中生有"的被禁值。线程 T1 与 T2 各自从第一个变量读取值，并将观察到的结果复制到第二个变量中，两个变量在线程间互换。若每个变量初值均为 0，则最终结果也应为 0。若 A1 读取自 B2、且 A2 读取自 B1，则经由本例内存操作传递的值构成一个环：A1&rarr;B1&rarr;A2&rarr;B2&rarr;A1。只有 x == 0 与 y == 0 这两种值被允许满足该环。若本例中任一内存操作投机式地给对应内存位置关联了不同的值，那么该投机将自我实现，因此被禁止。</p>
+<h4>Litmus Test：无依赖的加载缓冲（Load Buffering without dependencies）</h4>
+<table>
+<caption>Litmus Test: LB (no deps)</caption>
+<thead><tr><th>T1</th><th>T2</th></tr></thead>
+<tbody>
+<tr><td><pre><code>.global .u32 x = 0;
+.global .u32 y = 0;
+
+A1: ld.global.u32 %r0, [x];
+B1: st.global.u32 [y], 1;</code></pre></td>
+<td><pre><code>A2: ld.global.u32 %r1, [y];
+B2: st.global.u32 [x], 1;</code></pre></td></tr>
+<tr><td colspan="2">最终状态（FINAL STATE）：x == 1 且 y == 1</td></tr>
+</tbody></table>
+<p>该 litmus test 与前者的区别在于它无条件地向 x 与 y 存储 1。在此 litmus test 中，最终状态 x == 1 且 y == 1 是允许的。该执行并不与前一 litmus test 所展示的要求矛盾。这里不存在自我满足的环——它总会、且无条件地向 x 与 y 存储 1，因此该环并非自我满足，投机是有效的。</p>
+<p>此处缺乏依赖是明显的，但实现可能进行任意推理链以确定某次存储不依赖于先前的加载，从而打破原本会被 No-Thin-Air 公理禁止的自我满足环。这种形式的加载缓冲在 PTX 内存一致性模型中被刻意允许。</p>
+<h3>8.10.5　每位置顺序一致（Sequential Consistency Per Location）</h3>
+<p>在任意"两两道德强的重叠内存操作"集合中，通信序不得与程序序矛盾——即，重叠操作之间的程序序与通信序中道德强关系的拼接，不得形成环。这保证了每个"两两道德强的重叠操作"的程序切片（program slice）都严格顺序一致。</p>
+<h4>Litmus Test：CoRR</h4>
+<table>
+<caption>Litmus Test: CoRR（Coherent Read-Read）</caption>
+<thead><tr><th>T1</th><th>T2</th></tr></thead>
+<tbody>
+<tr><td><pre><code>.global .u32 x = 0;
+
+W1: st.global.relaxed.sys.u32 [x], 1;</code></pre></td>
+<td><pre><code>R1: ld.global.relaxed.sys.u32 %r0, [x];
+R2: ld.global.relaxed.sys.u32 %r1, [x];</code></pre></td></tr>
+<tr><td colspan="2">若 %r0 == 1 则 %r1 == 1</td></tr>
+</tbody></table>
+<p>litmus test "CoRR"（Coherent Read-Read，相干读-读）展示了该保证的一个推论。线程 T1 在位置 x 上执行一次写 W1，线程 T2 在同一位置 x 上执行两次（或无限序列）读 R1 与 R2。除建模初值的那次写外，x 上不执行其他写。操作 W1、R1、R2 两两道德强。若 R1 读取自 W1，则随后的读 R2 也必须观察到相同的值。若 R2 反而观察到了 x 的初值，则会形成通信序上 R2&rarr;W1&rarr;R1 的道德强关系序列，与线程 T2 中的程序序 R1&rarr;R2 矛盾。因此在此类执行中 R2 不能读取 x 的初值。</p>
+<h3>8.10.6　因果性（Causality）</h3>
+<p>通信序中的关系不得与因果序矛盾。这约束了读操作可从中读取值的候选写操作集合：</p>
+<ul><li>若读 R 在因果序上先于重叠的写 W，则 R 不能读取自 W。</li><li>若写 W 在因果序上先于重叠的读 R，则对于 R 与 W 共同访问的任意字节，R 不能读取自任何"在相干序上先于 W 的写 W&prime;"。</li></ul>
+<h4>Litmus Test：消息传递（Message Passing）</h4>
+<table>
+<caption>Litmus Test: MP（Message Passing）</caption>
+<thead><tr><th>T1</th><th>T2</th></tr></thead>
+<tbody>
+<tr><td><pre><code>.global .u32 data = 0;
+.global .u32 flag = 0;
+
+W1: st.global.u32 [data], 1;
+F1: fence.sys;
+W2: st.global.relaxed.sys.u32 [flag], 1;</code></pre></td>
+<td><pre><code>R1: ld.global.relaxed.sys.u32 %r0, [flag];
+F2: fence.sys;
+R2: ld.global.u32 %r1, [data];</code></pre></td></tr>
+<tr><td colspan="2">若 %r0 == 1 则 %r1 == 1</td></tr>
+</tbody></table>
+<p>名为"MP"（消息传递）的 litmus test，代表了典型同步算法的精髓。绝大多数有用的程序都可归约为该模式的有序应用。</p>
+<p>线程 T1 先写数据变量，再写标志变量；而线程 T2 先读标志变量，再读数据变量。对标志的操作道德强，且每个线程内的内存操作被一道屏障隔开，这些屏障也是道德强的。</p>
+<p>若 R1 观察到 W2，则释放模式"F1; W2"与获取模式"R1; F2"同步。这建立了因果序 W1 &rarr; F1 &rarr; W2 &rarr; R1 &rarr; F2 &rarr; R2。于是公理 causality 保证 R2 不能读取自任何"在相干序上先于 W1"的写。在本例无其他写的情况下，R2 必须读取自 W1。</p>
+<h4>Litmus Test：CoWR</h4>
+<table>
+<caption>Litmus Test: CoWR（虚拟别名需别名代理屏障）</caption>
+<thead><tr><th>T1</th><th>预期</th></tr></thead>
+<tbody>
+<tr><td><pre><code>// 这些地址是别名
+.global .u32 data_alias_1;
+.global .u32 data_alias_2;
+
+W1: st.global.u32 [data_alias_1], 1;
+F1: fence.proxy.alias;
+R1: ld.global.u32 %r1, [data_alias_2];</code></pre></td>
+<td><pre><code>%r1 == 1</code></pre></td></tr>
+</tbody></table>
+<p>虚拟别名（virtual alias）在同步路径上需要一个别名代理屏障（alias proxy fence）。</p>
+<h4>Litmus Test：存储缓冲（Store Buffering）</h4>
+<p>名为"SB"（存储缓冲）的 litmus test，展示了 <code>fence.sc</code> 强制的顺序一致性。线程 T1 先写第一个变量再读第二个变量，而线程 T2 先写第二个变量再读第一个变量。每个线程内的内存操作被 <code>fence.sc</code> 指令隔开，且这些屏障道德强。</p>
+<table>
+<caption>Litmus Test: SB（Store Buffering）</caption>
+<thead><tr><th>T1</th><th>T2</th></tr></thead>
+<tbody>
+<tr><td><pre><code>.global .u32 x = 0;
+.global .u32 y = 0;
+
+W1: st.global.u32 [x], 1;
+F1: fence.sc.sys;
+R1: ld.global.u32 %r0, [y];</code></pre></td>
+<td><pre><code>W2: st.global.u32 [y], 1;
+F2: fence.sc.sys;
+R2: ld.global.u32 %r1, [x];</code></pre></td></tr>
+<tr><td colspan="2">%r0 == 1 或 %r1 == 1</td></tr>
+</tbody></table>
+<p>在任何执行中，要么 F1 在 Fence-SC 序上先于 F2，要么反之。若 F1 在 Fence-SC 序上先于 F2，则 F1 与 F2 同步。这建立了因果序 W1 &rarr; F1 &rarr; F2 &rarr; R2。公理 causality 确保 R2 不能读取自任何"在相干序上先于 W1"的写。在本例该变量无其他写的情况下，R2 必须读取自 W1。类似地，当 F2 在 Fence-SC 序上先于 F1 时，R1 必须读取自 W2。若本例中每个 <code>fence.sc</code> 被 <code>fence.acq_rel</code> 指令替换，则该结果不保证。可能存在这样一种执行：每个线程的写都未被另一线程观察到，即可能两个 R1 与 R2 分别对变量 y 与 x 返回初值 "0"。</p>
+<h2>8.11　特殊情况（Special Cases）</h2>
+<h3>8.11.1　归约不形成获取模式（Reductions do not form Acquire Patterns）</h3>
+<p>像 <code>red</code> 这样的原子归约操作，不会与获取屏障形成获取模式。</p>
+<h4>Litmus Test：带 Red 指令的消息传递（Message Passing with a Red Instruction）</h4>
+<table>
+<caption>Litmus Test: MP with red</caption>
+<thead><tr><th>T1</th><th>T2</th></tr></thead>
+<tbody>
+<tr><td><pre><code>.global .u32 x = 0;
+.global .u32 flag = 0;
+
+W1: st.u32 [x], 42;
+W2: st.release.gpu.u32 [flag], 1;</code></pre></td>
+<td><pre><code>RMW1: red.sys.global.add.u32 [flag], 1;
+F2: fence.acquire.gpu;
+R2: ld.weak.u32 %r1, [x];</code></pre></td></tr>
+<tr><td colspan="2">%r1 == 0 且 flag == 2</td></tr>
+</tbody></table>
+<p>名为"MP"的 litmus test 展示了"归约被排除在获取模式之外"的后果。有可能观察到这样的结果：R2 从 x 读取值 0，且 flag 的最终值为 2。该结果是可能的，因为 T1 中的释放模式不与 T2 中的任何获取模式同步。改用 <code>atom</code> 指令而非 <code>red</code> 可禁止该结果。</p>
+</div>
+</body>
+</html>

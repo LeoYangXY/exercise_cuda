@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 10 章 特殊寄存器 (Special Registers) — PTX ISA 中文翻译</title>
+<style>
+body{font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.7;max-width:980px;margin:0 auto;padding:24px;color:#1a1a1a;background:#fff;}
+.banner{background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:12px 16px;margin-bottom:24px;font-size:14px;color:#7a5b00;}
+h1{font-size:28px;border-bottom:3px solid #76b900;padding-bottom:8px;}
+h2{font-size:22px;margin-top:36px;color:#2c3e50;border-left:5px solid #76b900;padding-left:10px;}
+h3{font-size:17px;color:#444;margin-top:18px;}
+.rubric{font-weight:bold;color:#76b900;margin-top:14px;font-size:15px;}
+pre{background:#1e1e1e;color:#d4d4d4;padding:14px 16px;border-radius:6px;overflow-x:auto;font-family:"Consolas","Courier New",monospace;font-size:13px;line-height:1.5;}
+code{background:#f0f0f0;padding:1px 5px;border-radius:3px;font-family:"Consolas","Courier New",monospace;font-size:13px;color:#c0392b;}
+pre code{background:none;padding:0;color:inherit;}
+table{border-collapse:collapse;margin:14px 0;width:auto;}
+th,td{border:1px solid #ccc;padding:8px 12px;text-align:left;font-size:14px;}
+th{background:#eef7e0;}
+.note{color:#555;}
+.regname{color:#c0392b;font-family:"Consolas",monospace;font-weight:bold;}
+</style>
+</head>
+<body>
+<div class="banner">本页由 AI 对照 NVIDIA 官方 PTX ISA 文档翻译，结合 CUDA 背景改写，仅供参考。
+<br>原文：<a href="https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#special-registers">NVIDIA PTX ISA — Special Registers</a></div>
+<h1>第 10 章 特殊寄存器（Special Registers）</h1>
+<p>PTX 包含若干预定义的只读变量，它们作为<strong>特殊寄存器（special register）</strong>可见，并通过 <code>mov</code> 或 <code>cvt</code> 指令访问。</p>
+<div class="note"><p><strong>术语说明：</strong>特殊寄存器是由硬件维护的只读寄存器，对应 CUDA 的 built-in variable（内建变量），例如 <span class="regname">%tid</span>（对应 <code>threadIdx</code>）、<span class="regname">%ntid</span>（对应 <code>blockDim</code>）、<span class="regname">%ctaid</span>（对应 <code>blockIdx</code>）、<span class="regname">%nctaid</span>（对应 <code>gridDim</code>）、<span class="regname">%laneid</span>（线程在 warp 内的编号）、<span class="regname">%warpid</span>（warp 编号）等。下文逐一说明每个寄存器的含义及其对应的 CUDA built-in。</p></div>
+<p>特殊寄存器列表如下：</p>
+<p><code>%tid</code> · <code>%ntid</code> · <code>%laneid</code> · <code>%warpid</code> · <code>%nwarpid</code> · <code>%ctaid</code> · <code>%nctaid</code> · <code>%smid</code> · <code>%nsmid</code> · <code>%gridid</code> · <code>%is_explicit_cluster</code> · <code>%clusterid</code> · <code>%nclusterid</code> · <code>%cluster_ctaid</code> · <code>%cluster_nctaid</code> · <code>%cluster_ctarank</code> · <code>%cluster_nctarank</code> · <code>%lanemask_eq</code> / <code>%lanemask_le</code> / <code>%lanemask_lt</code> / <code>%lanemask_ge</code> / <code>%lanemask_gt</code> · <code>%clock</code> / <code>%clock_hi</code> / <code>%clock64</code> · <code>%pm0</code>…<code>%pm7</code> · <code>%pm0_64</code>…<code>%pm7_64</code> · <code>%envreg0</code>…<code>%envreg31</code> · <code>%globaltimer</code> / <code>%globaltimer_lo</code> / <code>%globaltimer_hi</code> · <code>%reserved_smem_offset_begin</code> / <code>%reserved_smem_offset_end</code> / <code>%reserved_smem_offset_cap</code> / <code>%reserved_smem_offset_&lt;2&gt;</code> · <code>%total_smem_size</code> · <code>%aggr_smem_size</code> · <code>%dynamic_smem_size</code> · <code>%current_graph_exec</code></p>
+<section>
+<h2>10.1. 特殊寄存器：%tid</h2>
+<div class="rubric">%tid</div>
+<p>线程在 CTA（Collaborative Thread Array，协作线程数组，相当于 CUDA 的线程块 block）内的标识符。对应 CUDA 的 built-in 变量 threadIdx。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .v4 .u32 %tid;                  // thread id vector
+.sreg .u32 %tid.x, %tid.y, %tid.z;    // thread id components</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的、只读的、每线程特殊的寄存器，初始化为线程在 CTA 内的标识符。 特殊寄存器 %tid 包含一个 1D、2D 或 3D 向量以匹配 CTA 的形状；未使用维度上的 %tid 值为 0。 第四个分量未被使用，始终返回 0。 每个维度上的线程数量由预定义的特殊寄存器 %ntid 指定。</p>
+<p>CTA 内的每个线程都有唯一的 %tid。</p>
+<p>在每个 CTA 维度上，%tid 各分量取值范围为 0 到 %ntid-1。</p>
+<p>在 1D CTA 中，%tid.y == %tid.z == 0。 在 2D CTA 中，%tid.z == 0。</p>
+<p>保证满足以下关系：</p>
+<pre><code>0  &lt;=  %tid.x &lt;  %ntid.x
+0  &lt;=  %tid.y &lt;  %ntid.y
+0  &lt;=  %tid.z &lt;  %ntid.z</code></pre>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 1.0 版本引入，类型为 .v4.u16。</p>
+<p>在 PTX ISA 2.0 版本中重新定义为 .v4.u32 类型。 为兼容旧的 PTX 代码，可使用 16 位的 mov 和 cvt 指令读取 %tid 各分量的低 16 位。</p>
+<div class="rubric">目标架构说明</div>
+<p>在所有目标架构上均受支持。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32      %r1,%tid.x;  // move tid.x to %rh
+
+// legacy code accessing 16-bit components of %tid
+mov.u16      %rh,%tid.x;
+cvt.u32.u16  %r2,%tid.z;  // zero-extend tid.z to %r2</code></pre>
+</section>
+<section>
+<h2>10.2. 特殊寄存器：%ntid</h2>
+<div class="rubric">%ntid</div>
+<p>每个 CTA 的线程 ID 数量，即线程块的维度。对应 CUDA 的 built-in 变量 blockDim。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .v4 .u32 %ntid;                   // CTA shape vector
+.sreg .u32 %ntid.x, %ntid.y, %ntid.z;   // CTA dimensions</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为每个 CTA 维度上的线程 ID 数量。 特殊寄存器 %ntid 包含一个 3D CTA 形状向量，保存 CTA 的各维度大小。 CTA 各维度大小均非零；第四个分量未被使用，始终返回 0。 一个 CTA 内的线程总数为 (%ntid.x * %ntid.y * %ntid.z)。</p>
+<pre><code>%ntid.y == %ntid.z == 1 in 1D CTAs.
+%ntid.z ==1 in 2D CTAs.</code></pre>
+<p>%ntid.{x,y,z} 的最大值如下：</p>
+<table>
+<tr><th>.target architecture</th><th>%ntid.x</th><th>%ntid.y</th><th>%ntid.z</th></tr>
+<tr><td>sm_1x</td><td>512</td><td>512</td><td>64</td></tr>
+<tr><td>sm_20, sm_3x, sm_5x, sm_6x,
+sm_7x, sm_8x, sm_9x, sm_10x,
+sm_12x</td><td>1024</td><td>1024</td><td>64</td></tr>
+</table>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 1.0 版本引入，类型为 .v4.u16。</p>
+<p>在 PTX ISA 2.0 版本中重新定义为 .v4.u32 类型。 为兼容旧的 PTX 代码，可使用 16 位的 mov 和 cvt 指令读取 %ntid 各分量的低 16 位。</p>
+<div class="rubric">目标架构说明</div>
+<p>在所有目标架构上均受支持。</p>
+<div class="rubric">示例</div>
+<pre><code>// compute unified thread id for 2D CTA
+mov.u32  %r0,%tid.x;
+mov.u32  %h1,%tid.y;
+mov.u32  %h2,%ntid.x;
+mad.u32  %r0,%h1,%h2,%r0;
+
+mov.u16  %rh,%ntid.x;      // legacy code</code></pre>
+</section>
+<section>
+<h2>10.3. 特殊寄存器：%laneid</h2>
+<div class="rubric">%laneid</div>
+<p>线程在 warp 内的通道（lane）编号。对应 CUDA 的 built-in 变量（可通过 threadIdx.x % warpSize 计算）。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u32 %laneid;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，返回线程在 warp 内的 lane（通道）编号。 lane 编号取值范围为 0 到 WARP_SZ-1（WARP_SZ 为 warp 大小，通常为 32）。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 1.3 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>在所有目标架构上均受支持。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32  %r, %laneid;</code></pre>
+</section>
+<section>
+<h2>10.4. 特殊寄存器：%warpid</h2>
+<div class="rubric">%warpid</div>
+<p>warp（线程束）标识符。一个 warp 内的所有线程具有相同的 %warpid。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u32 %warpid;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，返回线程所属 warp 的标识符。 warp 标识符在单个 CTA 内是唯一的，但不能跨 CTA（同一网格内不同 CTA 之间不唯一）。 同一 warp 内的所有线程具有相同的 warp 标识符。</p>
+<p>注意：%warpid 返回的是读取那一刻线程所在的位置，但其值在运行过程中可能发生变化，例如线程因抢占而被重新调度之后。 因此，如果内核代码中需要“虚拟 warp 索引”，应使用 %ctaid 和 %tid 来计算；%warpid 主要用于让性能分析和诊断代码采样并记录诸如工作位置映射、负载分布等信息。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 1.3 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>在所有目标架构上均受支持。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32  %r, %warpid;</code></pre>
+</section>
+<section>
+<h2>10.5. 特殊寄存器：%nwarpid</h2>
+<div class="rubric">%nwarpid</div>
+<p>warp 标识符的最大数量（即一个 CTA 内 warp 的总数上界）。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u32 %nwarpid;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，返回 warp 标识符的最大数量。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 2.0 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>%nwarpid 需要 sm_20 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32  %r, %nwarpid;</code></pre>
+</section>
+<section>
+<h2>10.6. 特殊寄存器：%ctaid</h2>
+<div class="rubric">%ctaid</div>
+<p>线程网格（grid）内的 CTA 标识符，即线程块在网格中的索引。对应 CUDA 的 built-in 变量 blockIdx。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .v4 .u32 %ctaid;                      // CTA id vector
+.sreg .u32 %ctaid.x, %ctaid.y, %ctaid.z;    // CTA id components</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为线程网格（CTA grid）内 CTA 的标识符。 特殊寄存器 %ctaid 包含一个 1D、2D 或 3D 向量，取决于 CTA 网格的形状与秩（维度数）。 第四个分量未被使用，始终返回 0。</p>
+<p>保证满足以下关系：</p>
+<pre><code>0  &lt;=  %ctaid.x &lt;  %nctaid.x
+0  &lt;=  %ctaid.y &lt;  %nctaid.y
+0  &lt;=  %ctaid.z &lt;  %nctaid.z</code></pre>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 1.0 版本引入，类型为 .v4.u16。</p>
+<p>在 PTX ISA 2.0 版本中重新定义为 .v4.u32 类型。 为兼容旧的 PTX 代码，可使用 16 位的 mov 和 cvt 指令读取 %ctaid 各分量的低 16 位。</p>
+<div class="rubric">目标架构说明</div>
+<p>在所有目标架构上均受支持。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32  %r0,%ctaid.x;
+mov.u16  %rh,%ctaid.y;   // legacy code</code></pre>
+</section>
+<section>
+<h2>10.7. 特殊寄存器：%nctaid</h2>
+<div class="rubric">%nctaid</div>
+<p>每个网格（grid）的 CTA 数量，即网格的维度。对应 CUDA 的 built-in 变量 gridDim。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .v4 .u32 %nctaid                      // Grid shape vector
+.sreg .u32 %nctaid.x,%nctaid.y,%nctaid.z;   // Grid dimensions</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为网格每个维度上 CTA 的数量。 特殊寄存器 %nctaid 包含一个 3D 网格形状向量，每个元素的值至少为 1。 第四个分量未被使用，始终返回 0。</p>
+<p>%nctaid.{x,y,z} 的最大值如下：</p>
+<table>
+<tr><th>.target architecture</th><th>%nctaid.x</th><th>%nctaid.y</th><th>%nctaid.z</th></tr>
+<tr><td>sm_1x, sm_20</td><td>65535</td><td>65535</td><td>65535</td></tr>
+<tr><td>sm_3x, sm_5x, sm_6x, sm_7x,
+sm_8x, sm_9x, sm_10x, sm_12x</td><td>231 -1</td><td>65535</td><td>65535</td></tr>
+</table>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 1.0 版本引入，类型为 .v4.u16。</p>
+<p>在 PTX ISA 2.0 版本中重新定义为 .v4.u32 类型。 为兼容旧的 PTX 代码，可使用 16 位的 mov 和 cvt 指令读取各分量的低 16 位。 %nctaid.</p>
+<div class="rubric">目标架构说明</div>
+<p>在所有目标架构上均受支持。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32  %r0,%nctaid.x;
+mov.u16  %rh,%nctaid.x;     // legacy code</code></pre>
+</section>
+<section>
+<h2>10.8. 特殊寄存器：%smid</h2>
+<div class="rubric">%smid</div>
+<p>SM（Streaming Multiprocessor，流多处理器）标识符，表示线程当前执行所在的 SM 编号。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u32 %smid;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，返回某个特定线程正在其上执行的 SM（流多处理器）标识符。 SM 标识符取值范围为 0 到 %nsmid-1。 SM 标识符的编号不保证连续。</p>
+<div class="rubric">注意事项</div>
+<p>注意：%smid 返回的是读取那一刻线程所在的位置，但其值在运行过程中可能发生变化，例如线程因抢占而被重新调度之后。 %smid 主要用于让性能分析和诊断代码采样并记录诸如工作位置映射、负载分布等信息。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 1.3 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>在所有目标架构上均受支持。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32  %r, %smid;</code></pre>
+</section>
+<section>
+<h2>10.9. 特殊寄存器：%nsmid</h2>
+<div class="rubric">%nsmid</div>
+<p>SM 标识符的最大数量（设备上 SM 数量的保守上界）。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u32 %nsmid;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，返回 SM 标识符的最大数量。 The SM identifier numbering is not guaranteed to be contiguous, 因此 %nsmid 可能大于设备上 SM 的物理数量。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 2.0 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>%nsmid 需要 sm_20 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32  %r, %nsmid;</code></pre>
+</section>
+<section>
+<h2>10.10. 特殊寄存器：%gridid</h2>
+<div class="rubric">%gridid</div>
+<p>网格（grid）的标识符，用于区分不同次启动的网格。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u64 %gridid;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为每网格的时间性网格标识符。 调试器可用 %gridid 来区分并发（小型）网格中的 CTAs 和 clusters。</p>
+<p>在执行过程中可能会发生程序的重复启动，每一次启动都会开启一个“CTA 网格”。 该变量为本上下文（context）提供时间性的网格启动序号。</p>
+<p>对于 sm_1x 目标，%gridid 的取值范围限定为 [0..2^16-1]；对于 sm_20，限定为 [0..2^32-1]；sm_30 支持完整的 64 位范围。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 1.0 版本引入，类型为 .u16。</p>
+<p>在 PTX ISA 1.3 版本中重新定义为 .u32 类型。</p>
+<p>在 PTX ISA 3.0 版本中重新定义为 .u64 类型。</p>
+<p>为兼容旧的 PTX 代码，可使用 16 位和 32 位的 mov 与 cvt 指令读取 %gridid 各分量的低 16 位或低 32 位。</p>
+<div class="rubric">目标架构说明</div>
+<p>在所有目标架构上均受支持。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u64  %s, %gridid;  // 64-bit read of %gridid
+mov.u32  %r, %gridid;  // legacy code with 32-bit %gridid</code></pre>
+</section>
+<section>
+<h2>10.11. 特殊寄存器：%is_explicit_cluster</h2>
+<div class="rubric">%is_explicit_cluster</div>
+<p>判断用户是否显式指定了 cluster（线程簇）启动方式。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .pred %is_explicit_cluster;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为一个谓词（predicate）值，表示 cluster 启动方式是否由用户显式指定。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 7.8 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>需要 sm_90 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>.reg .pred p;
+
+mov.pred  p, %is_explicit_cluster;</code></pre>
+</section>
+<section>
+<h2>10.12. 特殊寄存器：%clusterid</h2>
+<div class="rubric">%clusterid</div>
+<p>网格内 cluster（线程簇）的标识符。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .v4 .u32 %clusterid;
+.sreg .u32 %clusterid.x, %clusterid.y, %clusterid.z;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为网格中每个维度上的 cluster 标识符。 网格中的每个 cluster 都有唯一的标识符。</p>
+<p>特殊寄存器 %clusterid 包含一个 1D、2D 或 3D 向量，取决于 cluster 的形状与秩。 第四个分量未被使用，始终返回 0。</p>
+<p>保证满足以下关系：</p>
+<pre><code>0  &lt;=  %clusterid.x &lt;  %nclusterid.x
+0  &lt;=  %clusterid.y &lt;  %nclusterid.y
+0  &lt;=  %clusterid.z &lt;  %nclusterid.z</code></pre>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 7.8 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>需要 sm_90 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>.reg .b32 %r&lt;2&gt;;
+.reg .v4 .b32 %rx;
+
+mov.u32     %r0, %clusterid.x;
+mov.u32     %r1, %clusterid.z;
+mov.v4.u32  %rx, %clusterid;</code></pre>
+</section>
+<section>
+<h2>10.13. 特殊寄存器：%nclusterid</h2>
+<div class="rubric">%nclusterid</div>
+<p>每个网格内 cluster 的数量。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .v4 .u32 %nclusterid;
+.sreg .u32 %nclusterid.x, %nclusterid.y, %nclusterid.z;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为网格每个维度上 cluster 的数量。</p>
+<p>特殊寄存器 %nclusterid 包含一个 3D 网格形状向量，以 cluster 为单位保存网格维度。 第四个分量未被使用，始终返回 0。</p>
+<p>有关 %nclusterid.{x,y,z} 最大值的细节，请参考《CUDA Programming Guide》。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 7.8 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>需要 sm_90 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>.reg .b32 %r&lt;2&gt;;
+.reg .v4 .b32 %rx;
+
+mov.u32     %r0, %nclusterid.x;
+mov.u32     %r1, %nclusterid.z;
+mov.v4.u32  %rx, %nclusterid;</code></pre>
+</section>
+<section>
+<h2>10.14. 特殊寄存器：%cluster_ctaid</h2>
+<div class="rubric">%cluster_ctaid</div>
+<p>cluster（线程簇）内 CTA 的标识符。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .v4 .u32 %cluster_ctaid;
+.sreg .u32 %cluster_ctaid.x, %cluster_ctaid.y, %cluster_ctaid.z;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为 cluster 内每个维度上的 CTA 标识符。 cluster 中的每个 CTA 都有唯一的 CTA 标识符。</p>
+<p>特殊寄存器 %cluster_ctaid 包含一个 1D、2D 或 3D 向量，取决于 cluster 的形状。 第四个分量未被使用，始终返回 0。</p>
+<p>保证满足以下关系：</p>
+<pre><code>0  &lt;=  %cluster_ctaid.x &lt;  %cluster_nctaid.x
+0  &lt;=  %cluster_ctaid.y &lt;  %cluster_nctaid.y
+0  &lt;=  %cluster_ctaid.z &lt;  %cluster_nctaid.z</code></pre>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 7.8 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>需要 sm_90 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>.reg .b32 %r&lt;2&gt;;
+.reg .v4 .b32 %rx;
+
+mov.u32     %r0, %cluster_ctaid.x;
+mov.u32     %r1, %cluster_ctaid.z;
+mov.v4.u32  %rx, %cluster_ctaid;</code></pre>
+</section>
+<section>
+<h2>10.15. 特殊寄存器：%cluster_nctaid</h2>
+<div class="rubric">%cluster_nctaid</div>
+<p>每个 cluster 内 CTA 的数量。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .v4 .u32 %cluster_nctaid;
+.sreg .u32 %cluster_nctaid.x, %cluster_nctaid.y, %cluster_nctaid.z;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为 cluster 内每个维度上 CTA 的数量。</p>
+<p>特殊寄存器 %cluster_nctaid 包含一个 3D 网格形状向量，以 CTA 为单位... 以 CTA 为单位保存 cluster 的维度。 第四个分量未被使用，始终返回 0。</p>
+<p>有关 %cluster_nctaid.{x,y,z} 最大值的细节，请参考《CUDA Programming Guide》。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 7.8 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>需要 sm_90 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>.reg .b32 %r&lt;2&gt;;
+.reg .v4 .b32 %rx;
+
+mov.u32     %r0, %cluster_nctaid.x;
+mov.u32     %r1, %cluster_nctaid.z;
+mov.v4.u32  %rx, %cluster_nctaid;</code></pre>
+</section>
+<section>
+<h2>10.16. 特殊寄存器：%cluster_ctarank</h2>
+<div class="rubric">%cluster_ctarank</div>
+<p>cluster 内 CTA 在所有维度上的整体秩（rank，线性编号）。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u32 %cluster_ctarank;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为 cluster 内 CTA 在所有维度上的秩（线性编号）。</p>
+<p>保证满足以下关系：</p>
+<pre><code>0  &lt;=  %cluster_ctarank &lt;  %cluster_nctarank</code></pre>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 7.8 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>需要 sm_90 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>.reg .b32 %r;
+
+mov.u32  %r, %cluster_ctarank;</code></pre>
+</section>
+<section>
+<h2>10.17. 特殊寄存器：%cluster_nctarank</h2>
+<div class="rubric">%cluster_nctarank</div>
+<p>cluster 内 CTA 在所有维度上的总数量。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u32 %cluster_nctarank;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为 cluster 内所有维度上的 CTA 总数量。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 7.8 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>需要 sm_90 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>.reg .b32 %r;
+
+mov.u32  %r, %cluster_nctarank;</code></pre>
+</section>
+<section>
+<h2>10.18. 特殊寄存器：%lanemask_eq</h2>
+<div class="rubric">%lanemask_eq</div>
+<p>32 位掩码，仅在与本线程在 warp 内的 lane 编号相等的位置置位。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u32 %lanemask_eq;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为一个 32 位掩码，在与本线程在 warp 内的 lane 编号相等的位置置位。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 2.0 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>%lanemask_eq 需要 sm_20 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32     %r, %lanemask_eq;</code></pre>
+</section>
+<section>
+<h2>10.19. 特殊寄存器：%lanemask_le</h2>
+<div class="rubric">%lanemask_le</div>
+<p>32 位掩码，在本线程 lane 编号及更小编号的位置均置位（小于等于）。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u32 %lanemask_le;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为一个 32 位掩码，在本线程 lane 编号及更小编号的位置均置位。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 2.0 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>%lanemask_le 需要 sm_20 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32     %r, %lanemask_le</code></pre>
+</section>
+<section>
+<h2>10.20. 特殊寄存器：%lanemask_lt</h2>
+<div class="rubric">%lanemask_lt</div>
+<p>32 位掩码，在本线程 lane 编号更小编号的位置置位（小于）。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u32 %lanemask_lt;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为一个 32 位掩码，在本线程 lane 编号更小编号的位置置位。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 2.0 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>%lanemask_lt 需要 sm_20 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32     %r, %lanemask_lt;</code></pre>
+</section>
+<section>
+<h2>10.21. 特殊寄存器：%lanemask_ge</h2>
+<div class="rubric">%lanemask_ge</div>
+<p>32 位掩码，在本线程 lane 编号及更大编号的位置均置位（大于等于）。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u32 %lanemask_ge;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为一个 32 位掩码，在本线程 lane 编号及更大编号的位置均置位。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 2.0 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>%lanemask_ge 需要 sm_20 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32     %r, %lanemask_ge;</code></pre>
+</section>
+<section>
+<h2>10.22. 特殊寄存器：%lanemask_gt</h2>
+<div class="rubric">%lanemask_gt</div>
+<p>32 位掩码，在本线程 lane 编号更大编号的位置置位（大于）。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u32 %lanemask_gt;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为一个 32 位掩码，在本线程 lane 编号更大编号的位置置位。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 2.0 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>%lanemask_gt 需要 sm_20 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32     %r, %lanemask_gt;</code></pre>
+</section>
+<section>
+<h2>10.23. 特殊寄存器：%clock, %clock_hi</h2>
+<div class="rubric">%clock, %clock_hi</div>
+<p>一个预定义的只读 32 位无符号周期计数器。</p>
+<p>即 %clock64 特殊寄存器的低 32 位 / 高 32 位部分。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u32 %clock;
+.sreg .u32 %clock_hi;</code></pre>
+<div class="rubric">说明</div>
+<p>特殊寄存器 %clock 与 %clock_hi 是无符号 32 位只读周期计数器，溢出时静默回绕（wrap）。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>%clock 于 PTX ISA 1.0 版本引入。</p>
+<p>%clock_hi 于 PTX ISA 5.0 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>%clock 在所有目标架构上均受支持。</p>
+<p>%clock_hi 需要 sm_20 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32 r1,%clock;
+mov.u32 r2, %clock_hi;</code></pre>
+</section>
+<section>
+<h2>10.24. 特殊寄存器：%clock64</h2>
+<div class="rubric">%clock64</div>
+<p>一个预定义的只读 64 位无符号周期计数器。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u64 %clock64;</code></pre>
+<div class="rubric">说明</div>
+<p>特殊寄存器 %clock64 是无符号 64 位只读周期计数器，溢出时静默回绕。</p>
+<div class="rubric">注意事项</div>
+<p>%clock64 的低 32 位与 %clock 完全相同。</p>
+<p>%clock64 的高 32 位与 %clock_hi 完全相同。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 2.0 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>%clock64 需要 sm_20 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u64  r1,%clock64;</code></pre>
+</section>
+<section>
+<h2>10.25. 特殊寄存器：%pm0 … %pm7</h2>
+<div class="rubric">%pm0 … %pm7</div>
+<p>性能监视计数器（performance monitoring counter）。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u32 %pm&lt;8&gt;;</code></pre>
+<div class="rubric">说明</div>
+<p>特殊寄存器 %pm0 … %pm7 是无符号 32 位只读性能监视计数器。 它们的行为目前是未定义的。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>%pm0 … %pm3 于 PTX ISA 1.3 版本引入。</p>
+<p>%pm4 … %pm7 于 PTX ISA 3.0 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>%pm0 … %pm3 在所有目标架构上均受支持。</p>
+<p>%pm4 … %pm7 需要 sm_20 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32  r1,%pm0;
+mov.u32  r1,%pm7;</code></pre>
+</section>
+<section>
+<h2>10.26. 特殊寄存器：%pm0_64 … %pm7_64</h2>
+<div class="rubric">%pm0_64 … %pm7_64</div>
+<p>64 位性能监视计数器。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u64 %pm0_64;
+.sreg .u64 %pm1_64;
+.sreg .u64 %pm2_64;
+.sreg .u64 %pm3_64;
+.sreg .u64 %pm4_64;
+.sreg .u64 %pm5_64;
+.sreg .u64 %pm6_64;
+.sreg .u64 %pm7_64;</code></pre>
+<div class="rubric">说明</div>
+<p>特殊寄存器 %pm0_64 … %pm7_64 是无符号 64 位只读性能监视计数器。 它们的行为目前是未定义的。</p>
+<div class="rubric">注意事项</div>
+<p>%pm0_64 … %pm7_64 的低 32 位与 %pm0 … %pm7 完全相同。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>%pm0_64 … %pm7_64 于 PTX ISA 4.0 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>%pm0_64 … %pm7_64 需要 sm_50 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32  r1,%pm0_64;
+mov.u32  r1,%pm7_64;</code></pre>
+</section>
+<section>
+<h2>10.27. 特殊寄存器：%envreg&lt;32&gt;</h2>
+<div class="rubric">%envreg&lt;32&gt;</div>
+<p>由驱动定义的只读寄存器。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .b32 %envreg&lt;32&gt;;</code></pre>
+<div class="rubric">说明</div>
+<p>一组共 32 个预定义只读寄存器，用于在 PTX 虚拟机之外捕获 PTX 程序的执行环境。 这些寄存器由驱动在内核启动前初始化，可包含 CTA 级或网格级的数值。</p>
+<p>这些寄存器的精确语义由驱动文档定义。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 2.1 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>在所有目标架构上均受支持。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.b32      %r1,%envreg0;  // move envreg0 to %r1</code></pre>
+</section>
+<section>
+<h2>10.28. 特殊寄存器：%globaltimer, %globaltimer_lo, %globaltimer_hi</h2>
+<div class="rubric">%globaltimer, %globaltimer_lo, %globaltimer_hi</div>
+<p>一个预定义的 64 位全局纳秒级定时器。</p>
+<p>即 %globaltimer 的低 32 位。</p>
+<p>即 %globaltimer 的高 32 位。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u64 %globaltimer;
+.sreg .u32 %globaltimer_lo, %globaltimer_hi;</code></pre>
+<div class="rubric">说明</div>
+<p>供 NVIDIA 工具使用的特殊寄存器。 其行为是目标相关的，在未来 GPU 上可能变更或被移除。 当 JIT 编译到其他目标架构时，这些寄存器的值是未指定的。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 3.1 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>需要目标架构 sm_30 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u64  r1,%globaltimer;</code></pre>
+</section>
+<section>
+<h2>10.29. 特殊寄存器：%reserved_smem_offset_begin, %reserved_smem_offset_end,
+%reserved_smem_offset_cap, %reserved_smem_offset_&lt;2&gt;</h2>
+<div class="rubric">%reserved_smem_offset_begin, %reserved_smem_offset_end, %reserved_smem_offset_cap, %reserved_smem_offset_&lt;2&gt;</div>
+<p>保留共享内存区域的起始偏移。</p>
+<p>保留共享内存区域的结束偏移。</p>
+<p>保留共享内存区域的总大小。</p>
+<p>保留共享内存区域内的偏移。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .b32 %reserved_smem_offset_begin;
+.sreg .b32 %reserved_smem_offset_end;
+.sreg .b32 %reserved_smem_offset_cap;
+.sreg .b32 %reserved_smem_offset_&lt;2&gt;;</code></pre>
+<div class="rubric">说明</div>
+<p>这些是预定义的只读特殊寄存器，包含关于“为 NVIDIA 系统软件保留”的共享内存区域的信息。 该共享内存区域对用户不可用，用户代码访问此区域将导致未定义行为。 详情请参考《CUDA Programming Guide》。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 7.6 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>需要 sm_80 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>.reg .b32 %reg_begin, %reg_end, %reg_cap, %reg_offset0, %reg_offset1;
+
+mov.b32 %reg_begin,   %reserved_smem_offset_begin;
+mov.b32 %reg_end,     %reserved_smem_offset_end;
+mov.b32 %reg_cap,     %reserved_smem_offset_cap;
+mov.b32 %reg_offset0, %reserved_smem_offset_0;
+mov.b32 %reg_offset1, %reserved_smem_offset_1;</code></pre>
+</section>
+<section>
+<h2>10.30. 特殊寄存器：%total_smem_size</h2>
+<div class="rubric">%total_smem_size</div>
+<p>内核的一个 CTA 所使用的共享内存总大小。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u32 %total_smem_size;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为内核启动时为其 CTA 分配的共享内存总大小（包含静态与动态分配，但不包含为 NVIDIA 系统软件保留的共享内存）。</p>
+<p>返回的大小以目标架构支持的共享内存分配单元大小的整数倍表示。</p>
+<p>分配单元大小如下：</p>
+<table>
+<tr><th>Target architecture</th><th>Shared memory allocation unit size</th></tr>
+<tr><td>sm_2x</td><td>128 bytes</td></tr>
+<tr><td>sm_3x, sm_5x, sm_6x, sm_7x</td><td>256 bytes</td></tr>
+<tr><td>sm_8x, sm_9x, sm_10x,
+sm_12x</td><td>128 bytes</td></tr>
+</table>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 4.1 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>需要 sm_20 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32  %r, %total_smem_size;</code></pre>
+</section>
+<section>
+<h2>10.31. 特殊寄存器：%aggr_smem_size</h2>
+<div class="rubric">%aggr_smem_size</div>
+<p>内核的一个 CTA 所使用的共享内存总大小。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u32 %aggr_smem_size;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为共享内存的聚合总大小，包含启动时为用户分配的共享内存大小（静态与动态）以及为 NVIDIA 系统软件保留的共享内存区域大小。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 8.1 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>需要 sm_90 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32  %r, %aggr_smem_size;</code></pre>
+</section>
+<section>
+<h2>10.32. 特殊寄存器：%dynamic_smem_size</h2>
+<div class="rubric">%dynamic_smem_size</div>
+<p>内核启动时动态分配的共享内存大小。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u32 %dynamic_smem_size;</code></pre>
+<div class="rubric">说明</div>
+<p>内核启动时动态分配的共享内存大小。</p>
+<p>一个预定义的只读特殊寄存器，初始化为内核启动时为其 CTA 动态分配的共享内存大小。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 4.1 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>需要 sm_20 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u32  %r, %dynamic_smem_size;</code></pre>
+</section>
+<section>
+<h2>10.33. 特殊寄存器：%current_graph_exec</h2>
+<div class="rubric">%current_graph_exec</div>
+<p>当前正在执行的 CUDA 设备图（device graph）的标识符。</p>
+<div class="rubric">语法（预定义）</div>
+<pre><code>.sreg .u64 %current_graph_exec;</code></pre>
+<div class="rubric">说明</div>
+<p>一个预定义的只读特殊寄存器，初始化为当前正在执行的 CUDA 设备图的标识符。 如果正在执行的内核不属于某个 CUDA 设备图，则该寄存器的值为 0。</p>
+<p>有关 CUDA 设备图的更多细节，请参考《CUDA Programming Guide》。</p>
+<div class="rubric">PTX ISA 版本说明</div>
+<p>于 PTX ISA 8.0 版本引入。</p>
+<div class="rubric">目标架构说明</div>
+<p>需要 sm_50 或更高版本。</p>
+<div class="rubric">示例</div>
+<pre><code>mov.u64  r1, %current_graph_exec;</code></pre>
+</section>
+</body></html>

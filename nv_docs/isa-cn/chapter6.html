@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 6 章 指令操作数（Instruction Operands）· PTX ISA 中文翻译</title>
+<style>
+  :root{--bg:#fdfdfd;--fg:#1c1c1c;--accent:#76b900;--accent2:#4d7a00;--code-bg:#f4f6f4;--border:#e0e0e0;--note:#fff8e1;}
+  body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.75;color:var(--fg);background:var(--bg);max-width:960px;margin:0 auto;padding:2rem 1.5rem 4rem;}
+  h1{font-size:2rem;border-bottom:4px solid var(--accent);padding-bottom:.4rem;margin-top:0;}
+  h2{font-size:1.5rem;margin-top:2.4rem;border-left:6px solid var(--accent);padding-left:.6rem;}
+  h3{font-size:1.2rem;margin-top:1.8rem;color:var(--accent2);}
+  h4{font-size:1.05rem;margin-top:1.4rem;}
+  p{margin:.7rem 0;}
+  code{background:var(--code-bg);padding:.15em .4em;border-radius:4px;font-family:"SFMono-Regular",Consolas,monospace;font-size:.92em;}
+  pre{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:1rem;overflow-x:auto;}
+  pre code{background:none;padding:0;}
+  table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.92em;}
+  th,td{border:1px solid var(--border);padding:.5rem .6rem;text-align:center;}
+  th{background:#eef3e8;}
+  td:first-child,th:first-child{text-align:left;}
+  .banner{background:var(--note);border:1px solid #f0d98a;border-radius:8px;padding:.9rem 1.1rem;font-size:.92em;margin-bottom:1.5rem;}
+  .term{color:var(--accent2);font-weight:600;}
+  .note{background:#eef6ff;border-left:4px solid #4a90d9;padding:.6rem .9rem;margin:1rem 0;border-radius:0 6px 6px 0;font-size:.92em;}
+  ul,ol{padding-left:1.6rem;}
+  li{margin:.3rem 0;}
+  hr{border:none;border-top:1px solid var(--border);margin:2rem 0;}
+  .toc{background:#f7f9f5;border:1px solid var(--border);border-radius:8px;padding:1rem 1.2rem;}
+  .toc a{text-decoration:none;color:var(--accent2);}
+  .toc a:hover{text-decoration:underline;}
+</style>
+</head>
+<body>
+
+<div class="banner">
+本页由 AI 对照 NVIDIA 官方 PTX ISA 文档翻译，结合 CUDA 背景改写，仅供参考。<br>
+原文：NVIDIA CUDA Parallel Thread Execution (PTX ISA)，第 6 章 Instruction Operands。
+</div>
+
+<h1>第 6 章 指令操作数（Instruction Operands）</h1>
+
+<div class="toc">
+<strong>目录</strong>
+<ol>
+  <li><a href="#c61">6.1 操作数类型信息（Operand Type Information）</a></li>
+  <li><a href="#c62">6.2 源操作数（Source Operands）</a></li>
+  <li><a href="#c63">6.3 目的操作数（Destination Operands）</a></li>
+  <li><a href="#c64">6.4 使用地址、数组与向量（Using Addresses, Arrays, and Vectors）</a>
+    <ul>
+      <li><a href="#c641">6.4.1 地址作为操作数</a></li>
+      <li><a href="#c6411">6.4.1.1 通用寻址（Generic Addressing）</a></li>
+      <li><a href="#c642">6.4.2 数组作为操作数</a></li>
+      <li><a href="#c643">6.4.3 向量作为操作数</a></li>
+      <li><a href="#c644">6.4.4 标签与函数名作为操作数</a></li>
+    </ul>
+  </li>
+  <li><a href="#c65">6.5 类型转换（Type Conversion）</a>
+    <ul>
+      <li><a href="#c651">6.5.1 标量转换</a></li>
+      <li><a href="#c652">6.5.2 舍入修饰符</a></li>
+    </ul>
+  </li>
+  <li><a href="#c66">6.6 操作数开销（Operand Costs）</a></li>
+</ol>
+</div>
+
+<p class="note">
+术语说明（结合 CUDA/PTX 背景）：PTX 指令的标准形式通常写作
+<code>op.type d, a, b;</code>，其中 <code>op</code> 为操作码、<code>type</code> 为数据类型、
+<code>d</code> 为目的操作数（destination）、<code>a,b</code> 等为源操作数（source）。
+下文首次出现的关键术语将给出英文原文与简要解释。
+</p>
+
+<hr>
+
+<h2 id="c61">6.1 操作数类型信息（Operand Type Information）</h2>
+<p>
+指令中的所有 <span class="term">operand（操作数）</span> 都拥有由其声明所确定的已知类型。
+每个操作数的类型都必须与“指令模板（instruction template）”以及“指令类型（instruction type）”所确定的类型相兼容。
+PTX 不会在类型之间做任何自动转换。
+</p>
+<p>
+<span class="term">bit-size 类型</span>（即以比特位宽命名的类型，如 <code>.b32</code>、<code>.b64</code>）与任何相同位宽的类型兼容；
+相同位宽的整数类型彼此之间也互相兼容。当某个操作数的类型与指令类型不同、但彼此兼容时，它会被“静默地（silently）”转换为指令类型。
+</p>
+
+<h2 id="c62">6.2 源操作数（Source Operands）</h2>
+<p>
+在指令描述中，源操作数（source operands）用字母 <code>a</code>、<code>b</code>、<code>c</code> 来标记。
+PTX 描述的是一种“加载–存储（load-store）”型机器，因此 ALU 指令的操作数必须全部位于
+<code>.reg</code> 寄存器状态空间（register state space）中声明的变量里。
+对大多数运算而言，各操作数的位宽必须保持一致。
+</p>
+<p>
+<code>cvt</code>（convert，转换）指令接受多种不同的操作数类型与位宽，因为它的职责正是把几乎任意数据类型转换为另一种数据类型（含位宽变化）。
+<code>ld</code>、<code>st</code>、<code>mov</code> 与 <code>cvt</code> 指令负责把数据从一个位置复制到另一个位置：
+</p>
+<ul>
+  <li><code>ld</code> 与 <code>st</code>：把数据在“可寻址状态空间（addressable state spaces）”与寄存器之间来回搬移；</li>
+  <li><code>mov</code>：在寄存器之间复制数据。</li>
+</ul>
+<p>
+大多数指令都带有一个可选的 <span class="term">predicate operand（谓词操作数，即 @p 形式的条件执行）</span>，
+用于控制条件执行；还有少数指令带有额外的谓词型源操作数。谓词操作数用字母 <code>p</code>、<code>q</code>、<code>r</code>、<code>s</code> 标记。
+</p>
+
+<h2 id="c63">6.3 目的操作数（Destination Operands）</h2>
+<p>
+产生单一结果的 PTX 指令，会把结果存入指令描述中标记为 <code>d</code>（destination，目的）的字段。
+该结果操作数是一个位于寄存器状态空间中的标量（scalar）或向量（vector）变量。
+</p>
+
+<h2 id="c64">6.4 使用地址、数组与向量（Using Addresses, Arrays, and Vectors）</h2>
+<p>
+把标量变量直接当作操作数使用是非常直观的；真正有趣的能力始于地址、数组与向量。
+</p>
+
+<h3 id="c641">6.4.1 地址作为操作数（Addresses as Operands）</h3>
+<p>
+所有的访存指令（memory instructions）都接受一个地址操作数（address operand），用来指明被访问的内存位置。
+这种 <span class="term">addressable operand（可寻址操作数）</span> 可以是以下几种形式之一：
+</p>
+<ul>
+  <li><code>[var]</code>：一个可寻址变量 <code>var</code> 的名字；</li>
+  <li><code>[reg]</code>：一个包含“字节地址（byte address）”的寄存器 <code>reg</code>，其类型为整型或 bit-size 类型；</li>
+  <li><code>[reg+immOff]</code>：包含字节地址的寄存器 <code>reg</code> 加上一个常量整数字节偏移（有符号，32 位）之和；</li>
+  <li><code>[var+immOff]</code>：可寻址变量 <code>var</code> 的地址加上一个常量整数字节偏移（有符号，32 位）之和；</li>
+  <li><code>[immAddr]</code>：一个立即数绝对字节地址（无符号，32 位）；</li>
+  <li><code>var[immOff]</code>：一个数组元素，详见下文“数组作为操作数”。</li>
+</ul>
+<p>
+存放地址的寄存器可以声明为 bit-size 类型或整型。一条访存指令的 <strong>访问宽度（access size）</strong>
+是指它在内存中实际访问的字节总数。例如，<code>ld.v4.b32</code> 的访问宽度是 16 字节，
+而 <code>atom.f16x2</code> 的访问宽度是 4 字节。地址必须按访问宽度的整数倍进行“自然对齐（naturally aligned）”。
+如果地址未正确对齐，其行为是<strong>未定义的（undefined）</strong>——比如访问可能通过悄悄屏蔽低位地址位来实现对齐，
+也可能直接触发异常（fault）。
+</p>
+<p>
+地址宽度可以是 32 位或 64 位，<strong>不支持 128 位地址</strong>。地址会按需零扩展（zero-extended）到指定宽度；
+若寄存器宽度超过目标架构对应状态空间的地址宽度，则会被截断。
+</p>
+<p>
+地址运算使用整数算术与逻辑指令完成（例如指针运算、指针比较）。所有地址及地址计算都以字节（byte）为单位，
+不支持 C 语言风格的“按类型大小”指针算术（即 <code>p+1</code> 不会自动乘以元素大小）。
+<code>mov</code> 指令可以把一个变量的地址搬入指针寄存器；该地址是变量所声明状态空间内的一个偏移量。
+</p>
+<p>
+加载（load）与存储（store）操作在寄存器与可寻址状态空间中的位置之间搬移数据，语法与许多汇编语言类似：
+标量变量直接写名字，地址则用方括号把 <span class="term">address expression（地址表达式，如 [r1] 或 a[r1]）</span> 括起来进行解引用。
+地址表达式包括：变量名、地址寄存器、地址寄存器加字节偏移，以及能在编译期求值为常量地址的立即数地址表达式。示例如下：
+</p>
+<pre><code>.shared .u16 x;          // 在 shared 空间声明 u16 变量 x
+.reg .u16 r0;            // 声明 u16 寄存器 r0
+.global .v4 .f32 V;      // 在 global 空间声明 v4.f32 向量变量 V
+.reg .v4 .f32 W;         // 声明 v4.f32 向量寄存器 W
+.const .s32 tbl[256];    // 在 const 空间声明含 256 个 s32 的数组 tbl
+.reg .b32 p;             // 声明 b32 寄存器 p（可当指针用）
+.reg .s32 q;             // 声明 s32 寄存器 q
+
+ld.shared.u16 r0, [x];   // 从 shared 加载 x 到 r0
+ld.global.v4.f32 W, [V]; // 从 global 以向量方式加载 V 到 W
+ld.const.s32 q, [tbl+12];// 从 const 数组 tbl 偏移 12 字节处加载到 q
+mov.u32 p, tbl;          // 把数组 tbl 的地址（偏移量）搬入 p</code></pre>
+
+<h4 id="c6411">6.4.1.1 通用寻址（Generic Addressing）</h4>
+<p>
+如果一条访存指令没有显式指定状态空间，则使用 <span class="term">generic addressing（通用寻址）</span> 方式执行。
+状态空间 <code>.const</code>、Kernel 函数参数（<code>.param</code>）、<code>.local</code> 与 <code>.shared</code>
+在通用地址空间（generic address space）中被建模为若干个“窗口（window）”。
+每个窗口由“窗口基址（window base）”和“窗口大小（window size）”定义，窗口大小等于对应状态空间的大小。
+</p>
+<p>
+一个通用地址会被映射到 global 内存，除非它落在 <code>.const</code>、<code>.local</code> 或 <code>.shared</code> 内存的窗口范围内。
+Kernel 函数参数（<code>.param</code>）窗口包含在 <code>.global</code> 窗口之内。在每个窗口内部，
+通用地址通过“减去窗口基址”来映射到底层状态空间中的真实地址。
+</p>
+
+<h3 id="c642">6.4.2 数组作为操作数（Arrays as Operands）</h3>
+<p>
+可以声明任意类型的数组，数组名会成为一个“数组所声明空间内的地址常量”，数组大小是程序中的常量。
+数组元素既可以通过显式计算出的字节地址访问，也可以用方括号下标（indexing）方式索引访问。
+方括号内的表达式可以是：一个常量整数、一个寄存器变量，或一个“寄存器加常量偏移”的简单表达式
+（偏移量是与寄存器变量相加或相减的常量表达式）。如果需要更复杂的索引，必须先把它写成一次地址计算，再用于访问。示例如下：
+</p>
+<pre><code>ld.global.u32 s, a[0];     // 加载数组 a 的第 0 个元素
+ld.global.u32 s, a[N-1];   // 加载数组 a 的最后一个元素（N 为常量）
+mov.u32 s, a[1];           // 把 a[1] 的地址搬入 s（注意：是地址，不是值）</code></pre>
+
+<h3 id="c643">6.4.3 向量作为操作数（Vectors as Operands）</h3>
+<p>
+向量操作数（vector operands）可以作为指令的源操作数和目的操作数来使用。
+但当它作为目的操作数时，向量表达式中的所有元素必须互不相同，否则行为未定义。
+向量也可以作为被调用函数的参数传递。向量元素可通过后缀 <code>.x</code>、<code>.y</code>、<code>.z</code>、<code>.w</code>
+以及典型的颜色分量字段 <code>.r</code>、<code>.g</code>、<code>.b</code>、<code>.a</code> 来提取。
+花括号包围的列表（brace-enclosed list）用于模式匹配，以拆解向量。例如：
+</p>
+<pre><code>.reg .v4 .f32 V;        // 声明 v4.f32 向量寄存器 V
+.reg .f32 a, b, c, d;   // 声明 4 个标量 f32 寄存器
+mov.v4.f32 {a,b,c,d}, V;// 把向量 V 的 4 个元素分别存入 a,b,c,d</code></pre>
+<p>
+向量加载与存储可用于实现“宽加载/宽存储（wide loads and stores）”，从而提升访存性能。
+在加载/存储操作中，寄存器既可以是一个向量，也可以是花括号包围的、类型相同的标量列表。例如：
+</p>
+<pre><code>ld.global.v4.f32 {a,b,c,d}, [addr+16];  // 宽加载 4 个 f32（共 16 字节）
+ld.global.v2.u32 V2, [addr+8];         // 以 v2 向量方式加载 2 个 u32</code></pre>
+<p>
+花括号向量（如 <code>{Ra, Rb, Rc, Rd}</code>）中的元素与提取分量的对应关系如下：
+</p>
+<pre><code>Ra = V.x = V.r
+Rb = V.y = V.g
+Rc = V.z = V.b
+Rd = V.w = V.a</code></pre>
+
+<h3 id="c644">6.4.4 标签与函数名作为操作数（Labels and Function Names as Operands）</h3>
+<p>
+标签（labels）只能用于 <code>bra</code> / <code>brx.idx</code> 指令；函数名（function names）只能用于 <code>call</code> 指令。
+函数名可以在 <code>mov</code> 指令中使用，以便把函数地址取入寄存器，供间接调用（indirect call）使用。
+</p>
+<p>
+从 PTX ISA 3.1 版本开始，<code>mov</code> 指令还可以用来获取 kernel 函数的地址，
+以便传给某个系统调用、从而从 GPU 上发起 kernel 启动（kernel launch）。这是 CUDA
+<strong>动态并行（Dynamic Parallelism）</strong> 支持的一部分，详见《CUDA Dynamic Parallelism Programming Guide》。
+</p>
+
+<h2 id="c65">6.5 类型转换（Type Conversion）</h2>
+<p>
+除了那些“改变大小或类型是指令定义本身一部分”的运算外，所有算术、逻辑与数据搬移指令的操作数都必须具有相同的类型与位宽。
+位宽或类型不同的操作数，必须在运算之前先完成转换。
+</p>
+
+<h3 id="c651">6.5.1 标量转换（Scalar Conversions）</h3>
+<p>
+表 15 与表 16 展示了：当 <code>cvt</code> 指令的源操作数与目的操作数类型不同时，它分别采用何种精度与格式。
+例如，若 <code>cvt.s32.u16</code> 的源操作数是 <code>u16</code>、目的操作数是 <code>s32</code>，
+则 <code>u16</code> 会被“零扩展（zero-extended）”到 <code>s32</code>。
+超出浮点数表示范围的转换结果，用浮点最大值表示（f32 与 f64 对应 IEEE 754 的 Inf；f16 约为 131000）。
+</p>
+
+<p><strong>表 15　转换指令精度与格式（整数 / 常用浮点）</strong></p>
+<table>
+<thead>
+<tr><th>源 \ 目的</th><th>s8</th><th>s16</th><th>s32</th><th>s64</th><th>u8</th><th>u16</th><th>u32</th><th>u64</th><th>f16</th><th>f32</th><th>f64</th><th>bf16</th><th>tf32</th></tr>
+</thead>
+<tbody>
+<tr><td>s8</td><td>–</td><td>sext</td><td>sext</td><td>sext</td><td>–</td><td>sext</td><td>sext</td><td>sext</td><td>s2f</td><td>s2f</td><td>s2f</td><td>s2f</td><td>–</td></tr>
+<tr><td>s16</td><td>chop<sup>1</sup></td><td>–</td><td>sext</td><td>sext</td><td>chop<sup>1</sup></td><td>–</td><td>sext</td><td>sext</td><td>s2f</td><td>s2f</td><td>s2f</td><td>s2f</td><td>–</td></tr>
+<tr><td>s32</td><td>chop<sup>1</sup></td><td>chop<sup>1</sup></td><td>–</td><td>sext</td><td>chop<sup>1</sup></td><td>chop<sup>1</sup></td><td>–</td><td>sext</td><td>s2f</td><td>s2f</td><td>s2f</td><td>s2f</td><td>–</td></tr>
+<tr><td>s64</td><td>chop<sup>1</sup></td><td>chop<sup>1</sup></td><td>chop<sup>1</sup></td><td>–</td><td>chop<sup>1</sup></td><td>chop<sup>1</sup></td><td>chop<sup>1</sup></td><td>–</td><td>s2f</td><td>s2f</td><td>s2f</td><td>s2f</td><td>–</td></tr>
+<tr><td>u8</td><td>–</td><td>zext</td><td>zext</td><td>zext</td><td>–</td><td>zext</td><td>zext</td><td>zext</td><td>u2f</td><td>u2f</td><td>u2f</td><td>u2f</td><td>–</td></tr>
+<tr><td>u16</td><td>chop<sup>1</sup></td><td>–</td><td>zext</td><td>zext</td><td>chop<sup>1</sup></td><td>–</td><td>zext</td><td>zext</td><td>u2f</td><td>u2f</td><td>u2f</td><td>u2f</td><td>–</td></tr>
+<tr><td>u32</td><td>chop<sup>1</sup></td><td>chop<sup>1</sup></td><td>–</td><td>zext</td><td>chop<sup>1</sup></td><td>chop<sup>1</sup></td><td>–</td><td>zext</td><td>u2f</td><td>u2f</td><td>u2f</td><td>u2f</td><td>–</td></tr>
+<tr><td>u64</td><td>chop<sup>1</sup></td><td>chop<sup>1</sup></td><td>chop<sup>1</sup></td><td>–</td><td>chop<sup>1</sup></td><td>chop<sup>1</sup></td><td>chop<sup>1</sup></td><td>–</td><td>u2f</td><td>u2f</td><td>u2f</td><td>u2f</td><td>–</td></tr>
+<tr><td>f16</td><td>f2s</td><td>f2s</td><td>f2s</td><td>f2s</td><td>f2u</td><td>f2u</td><td>f2u</td><td>f2u</td><td>–</td><td>f2f</td><td>f2f</td><td>f2f</td><td>–</td></tr>
+<tr><td>f32</td><td>f2s</td><td>f2s</td><td>f2s</td><td>f2s</td><td>f2u</td><td>f2u</td><td>f2u</td><td>f2u</td><td>f2f</td><td>–</td><td>f2f</td><td>f2f</td><td>f2f</td></tr>
+<tr><td>f64</td><td>f2s</td><td>f2s</td><td>f2s</td><td>f2s</td><td>f2u</td><td>f2u</td><td>f2u</td><td>f2u</td><td>f2f</td><td>f2f</td><td>–</td><td>f2f</td><td>–</td></tr>
+<tr><td>bf16</td><td>f2s</td><td>f2s</td><td>f2s</td><td>f2s</td><td>f2u</td><td>f2u</td><td>f2u</td><td>f2u</td><td>f2f</td><td>f2f</td><td>f2f</td><td>f2f</td><td>–</td></tr>
+<tr><td>tf32</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+</tbody>
+</table>
+
+<p><strong>表 16　转换指令精度与格式（低精度浮点 / 新型格式）</strong></p>
+<table>
+<thead>
+<tr><th>源 \ 目的</th><th>f16</th><th>f32</th><th>bf16</th><th>e4m3</th><th>e5m2</th><th>e2m3</th><th>e3m2</th><th>e2m1</th><th>ue8m0</th><th>s2f6</th></tr>
+</thead>
+<tbody>
+<tr><td>f16</td><td>–</td><td>f2f</td><td>f2f</td><td>f2f</td><td>f2f</td><td>f2f</td><td>f2f</td><td>f2f</td><td>–</td><td>–</td></tr>
+<tr><td>f32</td><td>f2f</td><td>–</td><td>f2f</td><td>f2f</td><td>f2f</td><td>f2f</td><td>f2f</td><td>f2f</td><td>f2f</td><td>f2f</td></tr>
+<tr><td>bf16</td><td>f2f</td><td>f2f</td><td>–</td><td>f2f</td><td>f2f</td><td>f2f</td><td>f2f</td><td>f2f</td><td>f2f</td><td>f2f</td></tr>
+<tr><td>e4m3</td><td>f2f</td><td>–</td><td>f2f</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+<tr><td>e5m2</td><td>f2f</td><td>–</td><td>f2f</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+<tr><td>e2m3</td><td>f2f</td><td>–</td><td>f2f</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+<tr><td>e3m2</td><td>f2f</td><td>–</td><td>f2f</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+<tr><td>e2m1</td><td>f2f</td><td>–</td><td>f2f</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+<tr><td>ue8m0</td><td>–</td><td>–</td><td>f2f</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+<tr><td>s2f6</td><td>–</td><td>–</td><td>f2f</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+</tbody>
+</table>
+
+<p><strong>缩写说明：</strong>
+<code>sext</code> = 符号扩展（sign-extend）；
+<code>zext</code> = 零扩展（zero-extend）；
+<code>chop</code> = 仅保留能放得下的低位（keep only low bits that fit）；
+<code>s2f</code> = 有符号整数转浮点（signed-to-float）；
+<code>f2s</code> = 浮点转有符号整数（float-to-signed）；
+<code>u2f</code> = 无符号整数转浮点（unsigned-to-float）；
+<code>f2u</code> = 浮点转无符号整数（float-to-unsigned）；
+<code>f2f</code> = 浮点转浮点（float-to-float）。
+</p>
+<p>
+<sup>1</sup> 如果目的寄存器比目的格式更宽，结果在“截断（chop）”后会被扩展到目的寄存器的宽度。
+扩展方式（符号扩展还是零扩展）取决于目的格式。例如，<code>cvt.s16.u32</code> 若目标是 32 位寄存器，
+则先截断到 16 位，再符号扩展到 32 位。
+</p>
+
+<h3 id="c652">6.5.2 舍入修饰符（Rounding Modifiers）</h3>
+<p>
+转换指令可以指定一个舍入修饰符（rounding modifier）。PTX 中共有 4 个整数舍入修饰符和 6 个浮点舍入修饰符。
+表 17 与表 18 对其作了汇总。
+</p>
+
+<p><strong>表 17　浮点舍入修饰符</strong></p>
+<table>
+<thead><tr><th>修饰符</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td><code>.rn</code></td><td>舍入到最接近的偶数（rounds to nearest even）</td></tr>
+<tr><td><code>.rna</code></td><td>舍入到最接近的值，当恰好居中时远离零（ties away from zero）</td></tr>
+<tr><td><code>.rz</code></td><td>向零方向舍入（rounds towards zero）</td></tr>
+<tr><td><code>.rm</code></td><td>向负无穷方向舍入（rounds towards negative infinity）</td></tr>
+<tr><td><code>.rp</code></td><td>向正无穷方向舍入（rounds towards positive infinity）</td></tr>
+<tr><td><code>.rs</code></td><td>根据“随机比特”与“尾数被丢弃比特”的整数加法进位，向零或远离零方向舍入</td></tr>
+</tbody>
+</table>
+
+<p><strong>表 18　整数舍入修饰符</strong></p>
+<table>
+<thead><tr><th>修饰符</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td><code>.rni</code></td><td>舍入到最接近的整数；若源恰在两个整数正中间，则取偶数整数</td></tr>
+<tr><td><code>.rzi</code></td><td>朝零方向舍入到最接近的整数</td></tr>
+<tr><td><code>.rmi</code></td><td>朝负无穷方向舍入到最接近的整数</td></tr>
+<tr><td><code>.rpi</code></td><td>朝正无穷方向舍入到最接近的整数</td></tr>
+</tbody>
+</table>
+
+<h2 id="c66">6.6 操作数开销（Operand Costs）</h2>
+<p>
+来自不同状态空间的操作数会影响运算的速度。寄存器最快，而 global 内存最慢。
+访存带来的大量延迟可以通过多种方式隐藏：
+</p>
+<ul>
+  <li>一是让多个执行线程并行——硬件可以发起一次访存操作后，切换到其它线程去执行；</li>
+  <li>另一种隐藏延迟的方法是<strong>尽早发出加载指令</strong>，因为在后续（按时间顺序）真正用到该结果之前，执行并不会被阻塞；</li>
+  <li>存储（store）操作中的寄存器会快得多地被释放出来可用。</li>
+</ul>
+<p>
+表 19 给出了访问不同内存种类的开销估值。
+</p>
+
+<p><strong>表 19　访问各状态空间的开销估算</strong></p>
+<table>
+<thead><tr><th>空间（Space）</th><th>时间（Time）</th><th>说明（Notes）</th></tr></thead>
+<tbody>
+<tr><td>Register（寄存器）</td><td>0</td><td> </td></tr>
+<tr><td>Shared（共享内存）</td><td>0</td><td> </td></tr>
+<tr><td>Constant（常量内存）</td><td>0</td><td>摊还成本很低，首次访问成本较高</td></tr>
+<tr><td>Local（局部内存）</td><td>&gt; 100 时钟</td><td> </td></tr>
+<tr><td>Parameter（参数）</td><td>0</td><td> </td></tr>
+<tr><td>Immediate（立即数）</td><td>0</td><td> </td></tr>
+<tr><td>Global（全局内存）</td><td>&gt; 100 时钟</td><td> </td></tr>
+<tr><td>Texture（纹理内存）</td><td>&gt; 100 时钟</td><td> </td></tr>
+<tr><td>Surface（表面内存）</td><td>&gt; 100 时钟</td><td> </td></tr>
+</tbody>
+</table>
+
+<hr>
+<p style="font-size:.85em;color:#777;">
+翻译说明：本页为 AI 对照 NVIDIA 官方 PTX ISA 文档第 6 章《Instruction Operands》所作的改写式中文翻译，
+代码示例与表格均保留原文结构。如需精确引用，请以官方英文原文为准。
+</p>
+
+</body>
+</html>

@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PTX ISA 第 4 章 语法（Syntax）中文翻译</title>
+<style>
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", "Source Han Sans SC", sans-serif;
+    line-height: 1.8;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2em 1.5em;
+    color: #1a1a1a;
+    background: #fdfdfd;
+  }
+  .notice {
+    background: #fff8e1;
+    border-left: 4px solid #ffb300;
+    padding: 0.9em 1.2em;
+    margin-bottom: 2em;
+    font-size: 0.92em;
+    color: #6b5300;
+  }
+  h1 { font-size: 1.9em; border-bottom: 2px solid #e0e0e0; padding-bottom: 0.3em; }
+  h2 { font-size: 1.45em; margin-top: 2em; color: #14366b; border-bottom: 1px solid #e0e0e0; padding-bottom: 0.2em; }
+  h3 { font-size: 1.18em; margin-top: 1.6em; color: #1d4e89; }
+  h4 { font-size: 1.04em; margin-top: 1.3em; color: #2a2a2a; }
+  code {
+    background: #f1f3f5;
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+    font-family: "SF Mono", Consolas, "Courier New", monospace;
+    font-size: 0.9em;
+    color: #b0341c;
+  }
+  pre {
+    background: #1e1e1e;
+    color: #e6e6e6;
+    padding: 1em 1.2em;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-family: "SF Mono", Consolas, "Courier New", monospace;
+    font-size: 0.86em;
+    line-height: 1.5;
+  }
+  pre code { background: none; color: inherit; padding: 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1.2em 0;
+    font-size: 0.92em;
+  }
+  th, td {
+    border: 1px solid #ccc;
+    padding: 0.5em 0.7em;
+    text-align: left;
+  }
+  th { background: #eef2f7; }
+  tbody tr:nth-child(even) { background: #f7f9fb; }
+  .kw { color: #b0341c; }
+  .term { font-weight: 600; }
+  .note { color: #555; font-size: 0.9em; }
+  blockquote {
+    background: #f3f6fb;
+    border-left: 4px solid #4a86c5;
+    margin: 1em 0;
+    padding: 0.6em 1em;
+    color: #2a2a2a;
+  }
+  ul { padding-left: 1.5em; }
+</style>
+</head>
+<body>
+
+<div class="notice">
+本页由 AI 对照 NVIDIA 官方 PTX ISA 文档翻译，结合 CUDA 背景改写，仅供参考。
+</div>
+
+<h1>第 4 章 语法（Syntax）</h1>
+
+<p>PTX 程序是一组文本形式的源模块（source module，即文件）的集合。PTX 源模块采用汇编语言风格的语法，包含指令操作码（opcode）和操作数（operand）。<span class="term">伪操作（pseudo-operation）</span>用于描述符号与寻址的管理。优化后端编译器 <span class="kw">ptxas</span> 负责对 PTX 源模块进行优化并汇编，最终生成对应的二进制目标文件。</p>
+
+<blockquote>
+<b>背景补充：</b>可以把 PTX 理解为“面向 GPU 的、类汇编的中间语言”。CUDA C/C++ 这类高级语言在编译时并不会直接生成机器码，而是先生成 PTX 文本；安装时（install time）由驱动中的 JIT 编译器（即 ptxas 后端）把 PTX 翻译为目标 GPU 架构的真实指令。因此你写 PTX 时是在写一种“虚拟汇编”，而不是直接写 SM 硬件指令。
+</blockquote>
+
+<h2>4.1 源格式（Source Format）</h2>
+
+<p>源模块是 ASCII 文本。各行以换行符（<code>
+</code>）分隔。</p>
+
+<p>所有空白字符（空格、制表符、换行等）彼此等价；除用于分隔语言中的词素（token）外，空白会被忽略。</p>
+
+<p>PTX 源模块可以用 C 预处理器 <span class="kw">cpp</span> 来处理。以 <code>#</code> 开头的行是预处理器指令（preprocessor directives）。以下是常见的预处理器指令：</p>
+
+<p><code>#include</code>, <code>#define</code>, <code>#if</code>, <code>#ifdef</code>, <code>#else</code>, <code>#endif</code>, <code>#line</code>, <code>#file</code></p>
+
+<p>Harbison 与 Steele 所著的 <em>C: A Reference Manual</em> 对 C 预处理器有详尽的说明。</p>
+
+<p>PTX 区分大小写，且关键字一律使用小写。</p>
+
+<p>每个 PTX 模块必须以一条 <span class="term">伪指令（directive，又称指示符）</span> <code>.version</code> 开头，用于指定 PTX 语言版本；随后必须跟一条 <code>.target</code> 伪指令，用于指定所假设的目标架构。关于这两条伪指令的更多信息，参见“PTX 模块伪指令（PTX Module Directives）”。</p>
+
+<blockquote>
+<b>directive（伪指令 / 指示符）说明：</b>PTX 中以“<code>.</code>”开头、用于声明或描述结构而非真正产生可执行操作的符号，统称为 directive。例如 <code>.entry</code> 定义一个 kernel 入口函数，<code>.reg</code> 声明寄存器变量，<code>.version</code> / <code>.target</code> 描述模块元信息。它们告诉编译器“怎么组织程序”，而不是“算什么”。它类似于汇编里的伪指令/汇编指示（assembler directive），本身不对应一条机器指令。
+</blockquote>
+
+<h2>4.2 注释（Comments）</h2>
+
+<p>PTX 的注释遵循 C/C++ 语法：使用<strong>不可嵌套</strong>的 <code>/*</code> 与 <code>*/</code> 表示可跨多行的注释，使用 <code>//</code> 表示一条从该处开始、直到下一个换行符（换行符同时结束当前行）为止的注释。注释不能出现在字符常量、字符串字面量，或其他注释之中。</p>
+
+<p>在 PTX 中，注释被视为空白（whitespace）。</p>
+
+<h2>4.3 语句（Statements）</h2>
+
+<p>一条 PTX <span class="term">语句（statement）</span>要么是伪指令（directive），要么是指令（instruction）。语句以一个可选的标签（label）开头，以分号（<code>;</code>）结尾。</p>
+
+<h4>示例</h4>
+
+<pre><code>        .reg     .b32 r1, r2;       // 声明 32 位寄存器 r1, r2
+        .global  .f32  array[N];    // 声明全局 float 数组 array
+
+start:  mov.b32   r1, %tid.x;       // 把线程 ID.x 存入 r1
+        shl.b32   r1, r1, 2;          // 线程 id 左移 2 位（即乘 4）
+        ld.global.b32 r2, array[r1];  // 线程 tid 读取 array[tid]
+        add.f32   r2, r2, 0.5;        // 加 1/2
+</code></pre>
+
+<blockquote>
+<b>代码说明：</b>这是一个典型 PTX 片段。<code>start:</code> 是标签；<code>mov</code> / <code>shl</code> / <code>ld.global</code> / <code>add</code> 是指令；<code>.reg</code> / <code>.global</code> 是伪指令。<code>%tid.x</code> 是只读特殊寄存器，表示线程在 block 内 x 维度的编号。整段逻辑是“每个线程根据自己 tid 计算下标，从全局数组 array 取出一个 float，再加 0.5”。
+</blockquote>
+
+<h3>4.3.1 伪指令语句（Directive Statements）</h3>
+
+<p>伪指令关键字（directive keyword）都以“<code>.</code>”开头，因此不可能与用户自定义的标识符冲突。PTX 中的伪指令列于表 1，并在“状态空间、类型与变量（State Spaces, Types, and Variables）”以及“伪指令（Directives）”两章中详述。</p>
+
+<h4>表 1 PTX 伪指令（PTX Directives）</h4>
+
+<table>
+<thead><tr><th>伪指令</th><th>伪指令</th><th>伪指令</th><th>伪指令</th></tr></thead>
+<tbody>
+<tr><td><code>.address_size</code></td><td><code>.explicitcluster</code></td><td><code>.maxnreg</code></td><td><code>.section</code></td></tr>
+<tr><td><code>.alias</code></td><td><code>.extern</code></td><td><code>.maxntid</code></td><td><code>.shared</code></td></tr>
+<tr><td><code>.align</code></td><td><code>.file</code></td><td><code>.minnctapersm</code></td><td><code>.sreg</code></td></tr>
+<tr><td><code>.branchtargets</code></td><td><code>.func</code></td><td><code>.noreturn</code></td><td><code>.target</code></td></tr>
+<tr><td><code>.callprototype</code></td><td><code>.global</code></td><td><code>.param</code></td><td><code>.tex</code></td></tr>
+<tr><td><code>.calltargets</code></td><td><code>.loc</code></td><td><code>.pragma</code></td><td><code>.version</code></td></tr>
+<tr><td><code>.common</code></td><td><code>.local</code></td><td><code>.reg</code></td><td><code>.visible</code></td></tr>
+<tr><td><code>.const</code></td><td><code>.maxclusterrank</code></td><td><code>.reqnctapercluster</code></td><td><code>.weak</code></td></tr>
+<tr><td><code>.entry</code></td><td><code>.maxnctapersm</code></td><td><code>.reqntid</code></td><td></td></tr>
+</tbody>
+</table>
+
+<h3>4.3.2 指令语句（Instruction Statements）</h3>
+
+<p>指令（instruction）由一条指令操作码（opcode）后跟一个逗号分隔的、零个或多个操作数的列表构成，并以分号结尾。操作数可以是寄存器变量、常量表达式、地址表达式，或标签名。指令带有一个可选的<strong>保护谓词（guard predicate）</strong>，用于控制条件执行。保护谓词位于可选的标签之后、操作码之前，写成 <code>@p</code> 的形式，其中 <code>p</code> 是谓词寄存器（predicate register）。保护谓词可选择性取反，写作 <code>@!p</code>。</p>
+
+<p>目的操作数（destination operand）在前，其后跟源操作数（source operands）。</p>
+
+<blockquote>
+<b>背景补充：</b>谓词寄存器（如 <code>%p0</code>）保存一个真/假值。写 <code>@p add.s32 r1, r2, r3</code> 表示“仅当 <code>p</code> 为真时才执行这条加法”；写 <code>@!p</code> 则表示“仅当 <code>p</code> 为假时执行”。这是 PTX 实现无分支条件执行（branchless 条件执行）的核心机制，可避免 warp 内分支发散（divergence）。
+</blockquote>
+
+<p>指令关键字（instruction keyword）列于表 2。所有指令关键字在 PTX 中都是保留字（reserved token）。</p>
+
+<h4>表 2 保留指令关键字（Reserved Instruction Keywords）</h4>
+
+<table>
+<thead><tr><th>指令关键字</th><th>指令关键字</th><th>指令关键字</th><th>指令关键字</th><th>指令关键字</th></tr></thead>
+<tbody>
+<tr><td><code>abs</code></td><td><code>cvta</code></td><td><code>min</code></td><td><code>shfl</code></td><td><code>vadd</code></td></tr>
+<tr><td><code>activemask</code></td><td><code>discard</code></td><td><code>mma</code></td><td><code>shl</code></td><td><code>vadd2</code></td></tr>
+<tr><td><code>add</code></td><td><code>div</code></td><td><code>mov</code></td><td><code>shr</code></td><td><code>vadd4</code></td></tr>
+<tr><td><code>addc</code></td><td><code>dp2a</code></td><td><code>movmatrix</code></td><td><code>sin</code></td><td><code>vavrg2</code></td></tr>
+<tr><td><code>alloca</code></td><td><code>dp4a</code></td><td><code>mul</code></td><td><code>slct</code></td><td><code>vavrg4</code></td></tr>
+<tr><td><code>and</code></td><td><code>elect</code></td><td><code>mul24</code></td><td><code>sqrt</code></td><td><code>vmad</code></td></tr>
+<tr><td><code>applypriority</code></td><td><code>ex2</code></td><td><code>multimem</code></td><td><code>st</code></td><td><code>vmax</code></td></tr>
+<tr><td><code>atom</code></td><td><code>exit</code></td><td><code>nanosleep</code></td><td><code>stackrestore</code></td><td><code>vmax2</code></td></tr>
+<tr><td><code>bar</code></td><td><code>fence</code></td><td><code>neg</code></td><td><code>stacksave</code></td><td><code>vmax4</code></td></tr>
+<tr><td><code>barrier</code></td><td><code>fma</code></td><td><code>not</code></td><td><code>stmatrix</code></td><td><code>vmin</code></td></tr>
+<tr><td><code>bfe</code></td><td><code>fns</code></td><td><code>or</code></td><td><code>sub</code></td><td><code>vmin2</code></td></tr>
+<tr><td><code>bfi</code></td><td><code>getctarank</code></td><td><code>pmevent</code></td><td><code>subc</code></td><td><code>vmin4</code></td></tr>
+<tr><td><code>bfind</code></td><td><code>griddepcontrol</code></td><td><code>popc</code></td><td><code>suld</code></td><td><code>vote</code></td></tr>
+<tr><td><code>bmsk</code></td><td><code>isspacep</code></td><td><code>prefetch</code></td><td><code>suq</code></td><td><code>vset</code></td></tr>
+<tr><td><code>bra</code></td><td><code>istypep</code></td><td><code>prefetchu</code></td><td><code>sured</code></td><td><code>vset2</code></td></tr>
+<tr><td><code>brev</code></td><td><code>ld</code></td><td><code>prmt</code></td><td><code>sust</code></td><td><code>vset4</code></td></tr>
+<tr><td><code>brkpt</code></td><td><code>ldmatrix</code></td><td><code>rcp</code></td><td><code>szext</code></td><td><code>vshl</code></td></tr>
+<tr><td><code>brx</code></td><td><code>ldu</code></td><td><code>red</code></td><td><code>tanh</code></td><td><code>vshr</code></td></tr>
+<tr><td><code>call</code></td><td><code>lg2</code></td><td><code>redux</code></td><td><code>tcgen05</code></td><td><code>vsub</code></td></tr>
+<tr><td><code>clmad</code></td><td><code>lop3</code></td><td><code>rem</code></td><td><code>tensormap</code></td><td><code>vsub2</code></td></tr>
+<tr><td><code>clz</code></td><td><code>mad</code></td><td><code>ret</code></td><td><code>testp</code></td><td><code>vsub4</code></td></tr>
+<tr><td><code>cnot</code></td><td><code>mad24</code></td><td><code>rsqrt</code></td><td><code>tex</code></td><td><code>wgmma</code></td></tr>
+<tr><td><code>copysign</code></td><td><code>madc</code></td><td><code>sad</code></td><td><code>tld4</code></td><td><code>wmma</code></td></tr>
+<tr><td><code>cos</code></td><td><code>mapa</code></td><td><code>selp</code></td><td><code>trap</code></td><td><code>xor</code></td></tr>
+<tr><td><code>clusterlaunchcontrol</code></td><td><code>match</code></td><td><code>set</code></td><td><code>txq</code></td><td><code>cp</code></td></tr>
+<tr><td><code>createpolicy</code></td><td><code>mbarrier</code></td><td><code>setmaxnreg</code></td><td><code>vabsdiff</code></td><td><code>max</code></td></tr>
+<tr><td><code>cvt</code></td><td><code>membar</code></td><td><code>shf</code></td><td><code>vabsdiff2</code></td><td><code>setp</code></td></tr>
+<tr><td><code>vabsdiff4</code></td><td></td><td></td><td></td><td></td></tr>
+</tbody>
+</table>
+
+<p class="note">原文出处：NVIDIA PTX ISA Version 9.3，第 4 章 Syntax。本页为对照官方文档的改写式中文翻译。</p>
+
+</body>
+</html>

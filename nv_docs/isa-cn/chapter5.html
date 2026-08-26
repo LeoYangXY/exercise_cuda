@@ -1,0 +1,2353 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PTX ISA 第5章 状态空间、类型与变量（中文翻译）</title><style>
+body{font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;max-width:960px;margin:0 auto;padding:24px;line-height:1.7;color:#1a1a1a;}
+h1{font-size:1.9em;border-bottom:3px solid #76b900;padding-bottom:.3em;color:#263d00;}
+h2{font-size:1.5em;margin-top:1.8em;border-left:5px solid #76b900;padding-left:.4em;color:#2f4a00;}
+h3{font-size:1.2em;margin-top:1.4em;color:#374c00;}
+h4{font-size:1.05em;color:#445;margin-top:1em;}
+table{border-collapse:collapse;width:100%;margin:1em 0;font-size:.92em;}
+th,td{border:1px solid #ccc;padding:6px 9px;text-align:left;vertical-align:top;}
+th{background:#eef6e0;}
+tr:nth-child(even) td{background:#fafcf5;}
+code{font-family:"SFMono-Regular",Consolas,monospace;background:#f3f3f3;padding:1px 4px;border-radius:3px;font-size:.9em;}
+pre{background:#0d1117;color:#e6edf3;padding:14px;border-radius:8px;overflow-x:auto;font-size:.86em;line-height:1.45;}
+pre code{background:none;color:inherit;padding:0;}
+.cn-note{background:#fff8e1;border:1px solid #ffe082;padding:12px 16px;border-radius:8px;margin:14px 0;font-size:.92em;}
+.cn-lead{background:#eef7e3;border-left:4px solid #76b900;padding:10px 14px;margin:10px 0;border-radius:0 6px 6px 0;font-size:.93em;}
+img{max-width:100%;height:auto;margin:10px 0;border:1px solid #eee;border-radius:4px;}
+.caption{font-size:.85em;color:#666;font-style:italic;}
+.footer{margin-top:40px;padding-top:14px;border-top:1px solid #ddd;color:#888;font-size:.85em;}
+</style></head><body><html><body><section id="state-spaces-types-and-variables">
+<span id="id31"></span><h1>5. 状态空间、数据类型与变量（State Spaces, Types, and Variables）</h1><div class="cn-note">本页由 AI 对照 NVIDIA 官方 PTX ISA 文档翻译，结合 CUDA 背景改写，仅供参考。<br/>术语对照：<b>state space（状态空间）</b>——PTX 中内存/寄存器地址空间的概念，如 .global 对应全局内存、.shared 对应共享内存、.local 对应局部内存/栈、.reg 寄存器、.param 为 kernel 参数、.const 常量内存；<b>type（数据类型）</b>——如 .f32 单精度浮点、.u32 无符号 32 位、.b64 64 位位模式；<b>predicate（谓词寄存器）</b>——用于条件执行的 1 位寄存器。</div>
+<p>尽管特定目标 GPU 上可用的具体资源会有所不同，但资源的种类在各个平台上是通用的，并且这些资源在 PTX 中通过 state space 和 data type 进行了抽象。</p>
+<section id="state-spaces">
+<span id="id32"></span><h2>5.1 状态空间（State Spaces）</h2>
+<p>state space 是具有特定特征的存储区域。所有变量都位于某个 state space 中。state space 的特征包括其大小、可寻址性、访问速度、访问权限以及 thread 之间的共享级别。</p>
+<p>PTX 中定义的 state space 是并行编程和图形编程的产物。state space 的列表如 <a class="reference internal" href="#state-spaces-state-spaces-tab"><span class="std std-numref">Table 6</span></a> 所示，而 state space 的特性如 <a class="reference internal" href="#state-spaces-properties-state-spaces"><span class="std std-numref">Table 7</span></a> 所示。</p>
+<table class="table-no-stripes docutils align-default" id="state-spaces-state-spaces-tab">
+<caption>
+<span class="caption-number">Table 6 </span><span class="caption-text">State Spaces</span>
+</caption>
+<colgroup>
+<col style="width: 15%"/>
+<col style="width: 85%"/>
+</colgroup>
+<thead>
+<tr class="row-odd">
+<th class="head"><p>Name</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.reg</span></code></p></td>
+<td><p>Registers, fast.</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">.sreg</span></code></p></td>
+<td><p>Special registers. Read-only; pre-defined; platform-specific.</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.const</span></code></p></td>
+<td><p>Shared, read-only memory.</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">.global</span></code></p></td>
+<td><p>Global memory, shared by all threads.</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.local</span></code></p></td>
+<td><p>Local memory, private to each thread.</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">.param</span></code></p></td>
+<td>
+<p>Kernel parameters, defined per-grid; or</p>
+<p>Function or local parameters, defined per-thread.</p>
+</td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.shared</span></code></p></td>
+<td><p>Addressable memory, defined per CTA, accessible to all threads in the cluster
+throughout the lifetime of the CTA that defines it.</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">.tex</span></code></p></td>
+<td><p>Global texture memory (deprecated).</p></td>
+</tr>
+</tbody>
+</table>
+<table class="table-no-stripes docutils align-default" id="state-spaces-properties-state-spaces">
+<caption>
+<span class="caption-number">Table 7 </span><span class="caption-text">Properties of State Spaces</span>
+</caption>
+<colgroup>
+<col style="width: 23%"/>
+<col style="width: 23%"/>
+<col style="width: 18%"/>
+<col style="width: 13%"/>
+<col style="width: 24%"/>
+</colgroup>
+<thead>
+<tr class="row-odd">
+<th class="head"><p>Name</p></th>
+<th class="head"><p>Addressable</p></th>
+<th class="head"><p>Initializable</p></th>
+<th class="head"><p>Access</p></th>
+<th class="head"><p>Sharing</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.reg</span></code></p></td>
+<td><p>No</p></td>
+<td><p>No</p></td>
+<td><p>R/W</p></td>
+<td><p>per-thread</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">.sreg</span></code></p></td>
+<td><p>No</p></td>
+<td><p>No</p></td>
+<td><p>RO</p></td>
+<td><p>per-CTA</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.const</span></code></p></td>
+<td><p>Yes</p></td>
+<td><p>Yes<sup>1</sup></p></td>
+<td><p>RO</p></td>
+<td><p>per-grid</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">.global</span></code></p></td>
+<td><p>Yes</p></td>
+<td><p>Yes<sup>1</sup></p></td>
+<td><p>R/W</p></td>
+<td><p>Context</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.local</span></code></p></td>
+<td><p>Yes</p></td>
+<td><p>No</p></td>
+<td><p>R/W</p></td>
+<td><p>per-thread</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">.param</span></code>
+(as input to kernel)</p></td>
+<td><p>Yes<sup>2</sup></p></td>
+<td><p>No</p></td>
+<td><p>RO</p></td>
+<td><p>per-grid</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.param</span></code>
+(used in functions)</p></td>
+<td><p>Restricted<sup>3</sup></p></td>
+<td><p>No</p></td>
+<td><p>R/W</p></td>
+<td><p>per-thread</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">.shared</span></code></p></td>
+<td><p>Yes</p></td>
+<td><p>No</p></td>
+<td><p>R/W</p></td>
+<td><p>per-cluster<sup>5</sup></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.tex</span></code></p></td>
+<td><p>No<sup>4</sup></p></td>
+<td><p>Yes, via driver</p></td>
+<td><p>RO</p></td>
+<td><p>Context</p></td>
+</tr>
+<tr class="row-odd">
+<td colspan="5">
+<p><strong>Notes:</strong></p>
+<p><sup>1</sup> Variables in <code class="docutils literal notranslate"><span class="pre">.const</span></code> and <code class="docutils literal notranslate"><span class="pre">.global</span></code> state spaces are initialized to zero by default.</p>
+<p><sup>2</sup> Accessible only via the <code class="docutils literal notranslate"><span class="pre">ld.param{::entry}</span></code> instruction. Address may be taken via
+<code class="docutils literal notranslate"><span class="pre">mov</span></code> instruction.</p>
+<p><sup>3</sup> Accessible via <code class="docutils literal notranslate"><span class="pre">ld.param{::func}</span></code> and <code class="docutils literal notranslate"><span class="pre">st.param{::func}</span></code> instructions. Device function
+input and return parameters may have their address taken via <code class="docutils literal notranslate"><span class="pre">mov</span></code>; the parameter is then located
+on the stack frame and its address is in the <code class="docutils literal notranslate"><span class="pre">.local</span></code> state space.</p>
+<p><sup>4</sup> Accessible only via the <code class="docutils literal notranslate"><span class="pre">tex</span></code> instruction.</p>
+<p><sup>5</sup> Visible to the owning CTA and other active CTAs in the cluster.</p>
+</td>
+</tr>
+</tbody>
+</table>
+<section id="register-state-space">
+<span id="id33"></span><h3>5.1.1 寄存器状态空间（.reg / Register）</h3>
+<div class="cn-lead"><b>【译】</b>寄存器（.reg）是 GPU 上最快的存储，对应 CUDA 中的寄存器文件（register file）。变量若声明在 .reg 空间，编译器会尽量将其分配到物理寄存器；容量小而速度快，不具地址（多数情况下不可取地址）。</div><p>Register（<code class="docutils literal notranslate"><span class="pre">.reg</span></code> state space）是快速的存储位置。register 的数量有限，并且会因平台而异。当超出该限制时，register 变量将被溢出到内存中，从而导致性能变化。对于每种架构，都有一个建议使用的 register 最大数量（详见 <em>CUDA Programming Guide</em>）。</p>
+<p>Register 可以是有类型的（有符号整数、无符号整数、浮点、predicate）或无类型的。register 的大小受到限制；除了位宽为 1-bit 的 predicate register 之外，标量 register 的宽度为 8、16、32、64 或 128 位，向量 register 的宽度为 16、32、64 或 128 位。8-bit register 最常见的用途是与 <code class="docutils literal notranslate"><span class="pre">ld</span></code>、<code class="docutils literal notranslate"><span class="pre">st</span></code> 和 <code class="docutils literal notranslate"><span class="pre">cvt</span></code> 指令一起使用，或作为向量元组的元素。</p>
+<p>Register 与其他 state space 的不同之处在于它们不是完全可寻址的，即无法引用 register 的地址。在编译为使用 Application Binary Interface（ABI）时，register 变量被限制在 function scope 内，不能在 module scope 声明。在编译包含 module scope 的 <code class="docutils literal notranslate"><span class="pre">.reg</span></code> 变量的旧版 PTX 代码（ISA 3.0 之前的版本）时，编译器会静默禁用 ABI 的使用。register 可能具有多字加载和存储所要求的对齐边界。</p>
+</section>
+<section id="special-register-state-space">
+<span id="id34"></span><h3>5.1.2 特殊寄存器状态空间（.sreg / Special Register）</h3>
+<div class="cn-lead"><b>【译】</b>特殊寄存器（.sreg）为只读、平台相关的预定义寄存器，如 %tid、%ntid、%laneid、%clock 等，提供线程/线程块的内建索引与硬件计数器，用于协作与同步。</div><p>Special register（<code class="docutils literal notranslate"><span class="pre">.sreg</span></code>）state space 保存预定义的、特定于平台的寄存器，例如 grid、cluster、CTA 和 thread 参数、时钟计数器以及性能监视寄存器。所有 special register 都是预定义的。</p>
+</section>
+<section id="constant-state-space">
+<span id="id35"></span><h3>5.1.3 常量状态空间（.const / Constant）</h3>
+<div class="cn-lead"><b>【译】</b>常量空间（.const）对应 CUDA 的常量内存（constant memory），由 host 通过 __constant__ 声明并拷贝，所有线程只读、有专用缓存，适合广播式只读小数据（如查找表）。</div><p>Constant（<code class="docutils literal notranslate"><span class="pre">.const</span></code>）state space 是由 host 初始化的只读内存。constant memory 通过 <code class="docutils literal notranslate"><span class="pre">ld.const</span></code> 指令访问。constant memory 的大小受到限制，目前限制为 64 KB，可用于保存静态大小的常量变量。另有 640 KB 的 constant memory，组织为十个独立的 64 KB 区域。driver 可以在这些区域中分配并初始化 constant buffer，并将指向这些 buffer 的指针作为 kernel function 参数传递。由于这十个区域不是连续的，driver 必须确保 constant buffer 的分配使得每个 buffer 完全位于一个 64 KB 区域之内，并且不会跨越区域边界。</p>
+<p>静态大小的常量变量具有可选的变量初始化器；没有显式初始化器的常量变量默认初始化为零。由 driver 分配的 constant buffer 由 host 初始化，并且指向此类 buffer 的指针作为 kernel 参数传递。有关将指向 constant buffer 的指针作为 kernel 参数传递的更多细节，请参见 <a class="reference internal" href="#kernel-function-parameter-attributes"><span class="std std-ref">Kernel Function Parameter Attributes</span></a> 中对 kernel parameter attribute 的描述。</p>
+<section id="banked-constant-state-space-deprecated">
+<span id="id36"></span><h4>5.1.3.1 分组常量状态空间（已废弃）</h4>
+<p>早期版本的 PTX 将 constant memory 暴露为一组十一个 64 KB 的 bank，变量声明和访问时都需要显式的 bank 编号。</p>
+<p>在 PTX ISA 2.2 版本之前，constant memory 被组织为固定大小的 bank。当时有十一个 64 KB 的 bank，并且使用 <code class="docutils literal notranslate"><span class="pre">.const[bank]</span></code> 修饰符指定 bank，其中 <em>bank</em> 的取值范围为 0 到 10。如果未给出 bank 编号，则假定为 bank 0。</p>
+<p>按照惯例，bank 0 用于所有静态大小的常量变量。其余的 bank 用于声明 <em>incomplete</em> 常量数组（例如在 C 语言中），其大小在编译时未知。例如，声明</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.extern .const[2] .b32 const_buffer[];
+</code></pre></div>
+</div>
+<p>会导致 <code class="docutils literal notranslate"><span class="pre">const_buffer</span></code> 指向 constant bank 2 的起始位置。然后该指针可用于访问整个 64 KB 的 constant bank。在同一 bank 中声明的多个 incomplete array 变量会被别名化，每个都指向所指定 constant bank 的起始地址。</p>
+<p>要访问 constant bank 1 到 10 中的数据，需要在 load 指令的 state space 中指定 bank 编号。例如，对 bank 2 中的 incomplete array 的访问方式如下：</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.extern .const[2] .b32 const_buffer[];
+ld.const[2].b32  %r1, [const_buffer+4]; // load second word
+</code></pre></div>
+</div>
+<p>在 PTX ISA 2.2 版本中，我们取消了显式的 bank，并用 kernel parameter attribute 取代了 driver 分配的 constant buffer 的 incomplete array 表示方式，从而允许将指向 constant buffer 的指针作为 kernel 参数传递。</p>
+</section>
+</section>
+<section id="global-state-space">
+<span id="id37"></span><h3>5.1.4 全局状态空间（.global / Global）</h3>
+<div class="cn-lead"><b>【译】</b>全局空间（.global）对应 CUDA 的全局内存（global memory，即 device 端可分配的显存），容量大但延迟高，是 host 与 device 之间、以及 kernel 之间传递数据的主通道。</div><p>Global（<code class="docutils literal notranslate"><span class="pre">.global</span></code>）state space 是 context 中所有 thread 均可访问的内存。它是不同 CTA、cluster 和 grid 中的 thread 相互通信的机制。使用 <code class="docutils literal notranslate"><span class="pre">ld.global</span></code>、<code class="docutils literal notranslate"><span class="pre">st.global</span></code> 和 <code class="docutils literal notranslate"><span class="pre">atom.global</span></code> 访问 global 变量。</p>
+<p>Global 变量具有可选的变量初始化器；没有显式初始化器的 global 变量默认初始化为零。</p>
+</section>
+<section id="local-state-space">
+<span id="id38"></span><h3>5.1.5 局部状态空间（.local / Local）</h3>
+<div class="cn-lead"><b>【译】</b>局部空间（.local）对应 CUDA 的局部内存（local memory，实际位于全局显存中，用于栈上溢出变量），每个线程私有；访问延迟等同于全局内存，常用于寄存器溢出与大型本地数组。</div><p>Local state space（<code class="docutils literal notranslate"><span class="pre">.local</span></code>）是每个 thread 用于保存其自身数据的私有内存。它通常是带 cache 的标准内存。其大小受到限制，因为它必须按每个 thread 进行分配。使用 <code class="docutils literal notranslate"><span class="pre">ld.local</span></code> 和 <code class="docutils literal notranslate"><span class="pre">st.local</span></code> 访问 local 变量。</p>
+<p>在编译为使用 <em>Application Binary Interface（ABI）</em> 时，<code class="docutils literal notranslate"><span class="pre">.local</span></code> state space 变量必须在 function scope 内声明，并在栈上分配。在不支持栈的实现中，所有 local memory 变量都存储在固定地址，不支持递归函数调用，并且 <code class="docutils literal notranslate"><span class="pre">.local</span></code> 变量可以在 module scope 声明。在编译包含 module scope 的 <code class="docutils literal notranslate"><span class="pre">.local</span></code> 变量的旧版 PTX 代码（ISA 3.0 之前的版本）时，编译器会静默禁用 ABI 的使用。</p>
+</section>
+<section id="parameter-state-space">
+<span id="id39"></span><h3>5.1.6 参数状态空间（.param / Parameter）</h3>
+<div class="cn-lead"><b>【译】</b>参数空间（.param）用于存放 kernel/device 函数的参数（对应 CUDA 的 kernel 形参），以及通过 .param 声明的结构体参数；对 kernel 而言是只读传入，调用者（host 端启动或 PTX call）写入。</div><p>Parameter（<code class="docutils literal notranslate"><span class="pre">.param</span></code>）state space 用于：（1）将输入参数从 host 传递给 kernel；（2a）为 kernel 执行期间调用的 device function 声明形式输入和返回参数；（2b）声明作为函数调用参数的局部作用域字节数组变量，通常用于按值将大型结构体传递给函数。kernel function 参数与 device function 参数在访问和共享方面有所不同（只读与读写、per-kernel 与 per-thread）。注意，PTX ISA 1.x 版本仅支持 <code class="docutils literal notranslate"><span class="pre">.param</span></code> space 中的 kernel function 参数；device function 参数以前被限制在 register state space 中。将 parameter state space 用于 device function 参数是在 PTX ISA 2.0 版本中引入的，并且需要 <code class="docutils literal notranslate"><span class="pre">sm_20</span></code> 或更高的目标架构。可以在带有 <code class="docutils literal notranslate"><span class="pre">.param</span></code> state space 的指令上指定附加子限定符 <code class="docutils literal notranslate"><span class="pre">::entry</span></code> 或 <code class="docutils literal notranslate"><span class="pre">::func</span></code>，以指示该地址指向的是 kernel function 参数还是 device function 参数。如果未指定子限定符，则默认子限定符是特定的，并且依赖于具体指令。例如，<code class="docutils literal notranslate"><span class="pre">st.param</span></code> 等价于 <code class="docutils literal notranslate"><span class="pre">st.param::func</span></code>，而 <code class="docutils literal notranslate"><span class="pre">isspacep.param</span></code> 等价于 <code class="docutils literal notranslate"><span class="pre">isspacep.param::entry</span></code>。有关默认子限定符假设的更多细节，请参考指令描述。</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Parameter space 的位置是特定于实现的。例如，在某些实现中，kernel parameter 驻留在 global memory 中。在这种情况下，parameter space 与 global space 之间不提供访问保护。尽管 kernel parameter space 的确切位置是特定于实现的，但 kernel parameter space 窗口始终包含在 global space 窗口之内。类似地，function 参数根据 <em>Application Binary Interface（ABI）</em> 的函数调用约定映射到参数传递寄存器或栈位置。因此，PTX 代码不应假设 <code class="docutils literal notranslate"><span class="pre">.param</span></code> space 变量的相对位置或顺序。</p>
+</div>
+<section id="kernel-function-parameters">
+<span id="id40"></span><h4>5.1.6.1 内核函数参数（Kernel Function Parameters）</h4>
+<p>每个 kernel function 定义都包含一个可选的参数列表。这些参数是在 <code class="docutils literal notranslate"><span class="pre">.param</span></code> state space 中声明的可寻址、只读变量。从 host 传递给 kernel 的值通过 <code class="docutils literal notranslate"><span class="pre">ld.param</span></code> 指令经由这些参数变量进行访问。kernel parameter 变量在 grid 内所有 cluster 的所有 CTA 之间共享。</p>
+<p>可以使用 <code class="docutils literal notranslate"><span class="pre">mov</span></code> 指令将 kernel parameter 的地址移入 register。得到的地址位于 <code class="docutils literal notranslate"><span class="pre">.param</span></code> state space 中，并通过 <code class="docutils literal notranslate"><span class="pre">ld.param</span></code> 指令访问。</p>
+<p class="rubric">Example</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.entry foo ( .param .b32 N, .param .align 8 .b8 buffer[64] )
+{
+    .reg .u32 %n;
+    .reg .f64 %d;
+
+    ld.param.u32 %n, [N];
+    ld.param.f64 %d, [buffer];
+    ...
+</code></pre></div>
+</div>
+<p class="rubric">Example</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.entry bar ( .param .b32 len )
+{
+    .reg .u32 %ptr, %n;
+
+    mov.u32      %ptr, len;
+    ld.param.u32 %n, [%ptr];
+    ...
+</code></pre></div>
+</div>
+<p>Kernel function 参数可以表示普通数据值，也可以保存指向 const、global、local 或 shared state space 中对象的地址。对于指针的情况，编译器和 runtime system 需要了解哪些参数是指针，以及它们指向哪个 state space。kernel parameter attribute 指令用于在 PTX 层面提供此信息。有关 kernel parameter attribute 指令的描述，请参见 <a class="reference internal" href="#kernel-function-parameter-attributes"><span class="std std-ref">Kernel Function Parameter Attributes</span></a>。</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>在当前实现中，对于将指向 constant buffer 的指针作为 kernel 参数传递的程序，不允许创建指向常量变量的通用指针（<code class="docutils literal notranslate"><span class="pre">cvta.const</span></code>）。</p>
+</div>
+</section>
+<section id="kernel-function-parameter-attributes">
+<span id="id41"></span><h4>5.1.6.2 内核函数参数属性</h4>
+<p>Kernel function 参数可以使用可选的 <code class="docutils literal notranslate"><span class="pre">.ptr</span></code> attribute 声明，以指示该参数是指向内存的指针，并同时指示所指向内存的 state space 和对齐方式。<a class="reference internal" href="#kernel-parameter-attribute-ptr"><span class="std std-ref">Kernel Parameter Attribute: .ptr</span></a> 描述了 <code class="docutils literal notranslate"><span class="pre">.ptr</span></code> kernel parameter attribute。</p>
+</section>
+<section id="kernel-parameter-attribute-ptr">
+<span id="id42"></span><h4>5.1.6.3 内核参数属性：.ptr</h4>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.ptr</span></code></p>
+<p>Kernel parameter alignment attribute.</p>
+<p class="rubric">Syntax</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.param .type .ptr .space .align N  varname
+.param .type .ptr        .align N  varname
+
+.space = { .const, .global, .local, .shared };
+</code></pre></div>
+</div>
+<p class="rubric">Description</p>
+<p>用于指定指针类型 kernel parameter 所指向内存的 state space，以及（可选的）对齐方式。对齐值 <em>N</em>（如果存在）必须是 2 的幂。如果未指定 state space，则假定该指针是指向 const、global、local 或 shared memory 之一的通用地址。如果未指定对齐方式，则假定所指向的内存按 4 字节边界对齐。</p>
+<p><code class="docutils literal notranslate"><span class="pre">.ptr</span></code>、<code class="docutils literal notranslate"><span class="pre">.space</span></code> 和 <code class="docutils literal notranslate"><span class="pre">.align</span></code> 之间的空格可以省略以提高可读性。</p>
+<p class="rubric">PTX ISA Notes</p>
+<ul class="simple">
+<li><p>Introduced in PTX ISA version 2.2.</p></li>
+<li><p>PTX ISA 3.1 版本中增加了对 <code class="docutils literal notranslate"><span class="pre">.const</span></code> space 的通用寻址支持。</p></li>
+</ul>
+<p class="rubric">Target ISA Notes</p>
+<ul class="simple">
+<li><p>Supported on all target architectures.</p></li>
+</ul>
+<p class="rubric">Examples</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.entry foo ( .param .u32 param1,
+             .param .u32 .ptr.global.align 16 param2,
+             .param .u32 .ptr.const.align 8 param3,
+             .param .u32 .ptr.align 16 param4  // generic address
+                                               // pointer
+) { .. }
+</code></pre></div>
+</div>
+</section>
+<section id="device-function-parameters">
+<span id="id43"></span><h4>5.1.6.4 设备函数参数（Device Function Parameters）</h4>
+<p>PTX ISA 2.0 版本将 parameter space 的使用扩展到了 device function 参数。最常见的用途是以按值方式传递无法放入 PTX register 的对象，例如大于 8 字节的 C 结构体。在这种情况下，使用 parameter space 中的字节数组。通常，调用方会声明一个局部作用域的 <code class="docutils literal notranslate"><span class="pre">.param</span></code> 字节数组变量，表示被展平的 C 结构体或联合体。该变量将按值传递给被调用方，被调用方声明一个与所传参数具有相同大小和对齐方式的 <code class="docutils literal notranslate"><span class="pre">.param</span></code> 形式参数。</p>
+<p class="rubric">Example</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>// pass object of type struct { double d; int y; };
+.func foo ( .reg .b32 N, .param .align 8 .b8 buffer[12] )
+{
+    .reg .f64 %d;
+    .reg .s32 %y;
+
+    ld.param.f64 %d, [buffer];
+    ld.param.s32 %y, [buffer+8];
+    ...
+}
+
+// code snippet from the caller
+// struct { double d; int y; } mystruct; is flattened, passed to foo
+    ...
+    .reg .f64 dbl;
+    .reg .s32 x;
+    .param .align 8 .b8 mystruct;
+    ...
+    st.param.f64 [mystruct+0], dbl;
+    st.param.s32 [mystruct+8], x;
+    call foo, (4, mystruct);
+    ...
+</code></pre></div>
+</div>
+<p>更多细节请参见关于函数调用语法的章节。</p>
+<p>函数输入参数可以通过 <code class="docutils literal notranslate"><span class="pre">ld.param</span></code> 读取，函数返回参数可以通过 <code class="docutils literal notranslate"><span class="pre">st.param</span></code> 写入；向输入参数写入或从返回参数读取都是非法的。</p>
+<p>除了按值传递结构体之外，只要被调用函数内部取了某个形式参数的地址，<code class="docutils literal notranslate"><span class="pre">.param</span></code> space 也是必需的。在 PTX 中，可以使用 <code class="docutils literal notranslate"><span class="pre">mov</span></code> 指令将函数输入参数的地址移入 register。注意，如有必要，该参数会被复制到栈上，因此该地址将位于 <code class="docutils literal notranslate"><span class="pre">.local</span></code> state space 中，并通过 <code class="docutils literal notranslate"><span class="pre">ld.local</span></code> 和 <code class="docutils literal notranslate"><span class="pre">st.local</span></code> 指令访问。无法使用 <code class="docutils literal notranslate"><span class="pre">mov</span></code> 获取局部作用域 <code class="docutils literal notranslate"><span class="pre">.param</span></code> space 变量的地址。从 PTX ISA 6.0 版本开始，可以使用 <code class="docutils literal notranslate"><span class="pre">mov</span></code> 指令获取 device function 返回参数的地址。</p>
+<p class="rubric">Example</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>// pass array of up to eight floating-point values in buffer
+.func foo ( .param .b32 N, .param .b32 buffer[32] )
+{
+    .reg .u32  %n, %r;
+    .reg .f32  %f;
+    .reg .pred %p;
+
+    ld.param.u32 %n, [N];
+    mov.u32      %r, buffer;  // forces buffer to .local state space
+Loop:
+    setp.eq.u32  %p, %n, 0;
+@%p bra         Done;
+    ld.local.f32 %f, [%r];
+    ...
+    add.u32      %r, %r, 4;
+    sub.u32      %n, %n, 1;
+    bra          Loop;
+Done:
+    ...
+}
+</code></pre></div>
+</div>
+</section>
+</section>
+<section id="shared-state-space">
+<span id="id44"></span><h3>5.1.7 共享状态空间（.shared / Shared）</h3>
+<div class="cn-lead"><b>【译】</b>共享空间（.shared）对应 CUDA 的共享内存（shared memory，片上 SRAM），同一线程块（CTA）内的线程共享、可低延迟读写并用于协作与通信；由程序员用 __shared__ 显式管理，容量有限但极快。</div><p>Shared（<code class="docutils literal notranslate"><span class="pre">.shared</span></code>）state space 是由正在执行的 CTA 拥有的内存，并且 cluster 内所有 CTA 的 thread 均可访问。shared memory 中的地址可以被 CTA cluster 中的任何 thread 读取和写入。</p>
+<p>可以在带有 <code class="docutils literal notranslate"><span class="pre">.shared</span></code> state space 的指令上指定附加子限定符 <code class="docutils literal notranslate"><span class="pre">::cta</span></code> 或 <code class="docutils literal notranslate"><span class="pre">::cluster</span></code>，以分别指示该地址属于正在执行的 CTA 的 shared memory 窗口还是 cluster 中任一 CTA 的 shared memory 窗口。<code class="docutils literal notranslate"><span class="pre">.shared::cta</span></code> 窗口中的地址同时也落在 <code class="docutils literal notranslate"><span class="pre">.shared::cluster</span></code> 窗口内。如果未指定子限定符，则默认为 <code class="docutils literal notranslate"><span class="pre">::cta</span></code>。例如，<code class="docutils literal notranslate"><span class="pre">ld.shared</span></code> 等价于 <code class="docutils literal notranslate"><span class="pre">ld.shared::cta</span></code>。</p>
+<p>在 <code class="docutils literal notranslate"><span class="pre">.shared</span></code> state space 中声明的变量引用当前 CTA 中的内存地址。<code class="docutils literal notranslate"><span class="pre">mapa</span></code> 指令给出 cluster 中另一个 CTA 的对应变量的 <code class="docutils literal notranslate"><span class="pre">.shared::cluster</span></code> 地址。</p>
+<p>Shared memory 通常具有一些优化以支持共享。一个例子是广播（broadcast），即所有 thread 从同一地址读取。另一个例子是来自顺序 thread 的顺序访问。</p>
+<p>静态分配的 shared memory 的最大容量为每个 CTA 48 KB。诸如 <code class="docutils literal notranslate"><span class="pre">sm_90a</span></code> 之类的架构特定目标支持超出每个 CTA 48 KB 的扩展 shared memory 容量，如下所述：</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 61%"/>
+<col style="width: 39%"/>
+</colgroup>
+<thead>
+<tr class="row-odd">
+<th class="head"><p>Target architecture</p></th>
+<th class="head"><p>Maximum shared memory size</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_90a</span></code></p></td>
+<td><p>228 KB</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_100a</span></code>, <code class="docutils literal notranslate"><span class="pre">sm_103a</span></code></p></td>
+<td><p>228 KB</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_110a</span></code></p></td>
+<td><p>228 KB</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">sm_120a</span></code>, <code class="docutils literal notranslate"><span class="pre">sm_121a</span></code></p></td>
+<td><p>100 KB</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="texture-state-space-deprecated">
+<span id="id45"></span><h3>5.1.8 纹理状态空间（已废弃）</h3>
+<div class="cn-lead"><b>【译】</b>纹理空间（.tex）已废弃，旧版用于纹理内存采样；新代码应使用 Texture Sampler and Surface Types（见 5.3）。</div><p>Texture（<code class="docutils literal notranslate"><span class="pre">.tex</span></code>）state space 是通过 texture 指令访问的 global memory。它由 context 中的所有 thread 共享。texture memory 是只读且带 cache 的，因此对 texture memory 的访问与对 texture 图像的 global memory 存储不具有一致性。</p>
+<p>GPU 硬件具有固定数量的 texture 绑定，可以在单个 kernel 内访问（通常为 128 个）。<code class="docutils literal notranslate"><span class="pre">.tex</span></code> 指令会将命名的 texture memory 变量绑定到硬件 texture 标识符，其中 texture 标识符从零开始顺序分配。多个名称可以绑定到同一个物理 texture 标识符。如果超出物理资源的最大数量，则会生成错误。texture 名称必须是 <code class="docutils literal notranslate"><span class="pre">.u32</span></code> 或 <code class="docutils literal notranslate"><span class="pre">.u64</span></code> 类型。</p>
+<p>物理 texture 资源按每个 kernel 的粒度分配，并且 <code class="docutils literal notranslate"><span class="pre">.tex</span></code> 变量必须在 global scope 中定义。</p>
+<p>Texture memory 是只读的。texture 的基地址假定按 16 字节边界对齐。</p>
+<p class="rubric">Example</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.tex .u32 tex_a;         // bound to physical texture 0
+.tex .u32 tex_c, tex_d;  // both bound to physical texture 1
+.tex .u32 tex_d;         // bound to physical texture 2
+.tex .u32 tex_f;         // bound to physical texture 3
+</code></pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>在 texture state space 中显式声明变量已被弃用，程序应当改为通过 <code class="docutils literal notranslate"><span class="pre">.texref</span></code> 类型的变量来引用 texture memory。<code class="docutils literal notranslate"><span class="pre">.tex</span></code> 指令为了向后兼容而保留，并且在 <code class="docutils literal notranslate"><span class="pre">.tex</span></code> state space 中声明的变量等价于 <code class="docutils literal notranslate"><span class="pre">.global</span></code> state space 中的 module-scoped <code class="docutils literal notranslate"><span class="pre">.texref</span></code> 变量。</p>
+</div>
+<p>例如，旧版 PTX 定义如</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.tex .u32 tex_a;
+</code></pre></div>
+</div>
+<p>is equivalent to:</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.global .texref tex_a;
+</code></pre></div>
+</div>
+<p>有关 <code class="docutils literal notranslate"><span class="pre">.texref</span></code> 类型的描述，请参见 <a class="reference internal" href="#texture-sampler-and-surface-types"><span class="std std-ref">Texture Sampler and Surface Types</span></a>；有关其在 texture 指令中的使用，请参见 <a class="reference internal" href="#texture-instructions"><span class="std std-ref">Texture Instructions</span></a>。</p>
+</section>
+</section>
+<section id="types">
+<span id="id46"></span><h2>5.2 数据类型（Types）</h2>
+<section id="fundamental-types">
+<span id="id47"></span><h3>5.2.1 基础类型（Fundamental Types）</h3>
+<div class="cn-lead"><b>【译】</b>PTX 通过类型后缀（如 .u32/.s32/.f32/.b64）约束操作数的位宽与解释方式；整型分有符号（.s）、无符号（.u）与位模式（.b），浮点用 .f32/.f64/.f16 等。</div><p>在 PTX 中，fundamental type 反映目标架构所支持的原生数据类型。fundamental type 同时指定了基本类型（basic type）和大小。register 变量始终属于某种 fundamental type，并且指令在这些类型上操作。变量定义和指令类型化使用相同的类型-大小说明符，因此其名称有意设计得很简短。</p>
+<p><a class="reference internal" href="#fundamental-types-fundamental-type-specifiers"><span class="std std-numref">Table 8</span></a> 列出了每种基本类型的 fundamental type 说明符：</p>
+<table class="table-no-stripes docutils align-default" id="fundamental-types-fundamental-type-specifiers">
+<caption>
+<span class="caption-number">Table 8 </span><span class="caption-text">Fundamental Type Specifiers</span>
+</caption>
+<colgroup>
+<col style="width: 26%"/>
+<col style="width: 74%"/>
+</colgroup>
+<thead>
+<tr class="row-odd">
+<th class="head"><p>Basic Type</p></th>
+<th class="head"><p>Fundamental Type Specifiers</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p>Signed integer</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.s8</span></code>, <code class="docutils literal notranslate"><span class="pre">.s16</span></code>, <code class="docutils literal notranslate"><span class="pre">.s32</span></code>, <code class="docutils literal notranslate"><span class="pre">.s64</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p>Unsigned integer</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.u8</span></code>, <code class="docutils literal notranslate"><span class="pre">.u16</span></code>, <code class="docutils literal notranslate"><span class="pre">.u32</span></code>, <code class="docutils literal notranslate"><span class="pre">.u64</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p>Floating-point</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.f16</span></code>, <code class="docutils literal notranslate"><span class="pre">.f16x2</span></code>, <code class="docutils literal notranslate"><span class="pre">.f32</span></code>, <code class="docutils literal notranslate"><span class="pre">.f64</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p>Bits (untyped)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.b8</span></code>, <code class="docutils literal notranslate"><span class="pre">.b16</span></code>, <code class="docutils literal notranslate"><span class="pre">.b32</span></code>, <code class="docutils literal notranslate"><span class="pre">.b64</span></code>, <code class="docutils literal notranslate"><span class="pre">.b128</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p>Predicate</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.pred</span></code></p></td>
+</tr>
+</tbody>
+</table>
+<p>大多数指令具有一个或多个类型说明符，用于完全指定指令的行为。operand 的类型和大小会与指令类型进行兼容性检查。</p>
+<p>如果两个 fundamental type 具有相同的基本类型和相同的大小，则它们是兼容的。有符号和无符号整数类型如果大小相同则兼容。bit-size 类型与任何具有相同大小的 fundamental type 兼容。</p>
+<p>原则上，所有变量（predicate 除外）都可以仅使用 bit-size 类型声明，但带类型的变量增强了程序的可读性，并允许更好的 operand 类型检查。</p>
+</section>
+<section id="restricted-use-of-sub-word-sizes">
+<span id="id48"></span><h3>5.2.2 子字长尺寸的受限使用</h3>
+<p><code class="docutils literal notranslate"><span class="pre">.u8</span></code>、<code class="docutils literal notranslate"><span class="pre">.s8</span></code> 和 <code class="docutils literal notranslate"><span class="pre">.b8</span></code> 指令类型仅限于 <code class="docutils literal notranslate"><span class="pre">ld</span></code>、<code class="docutils literal notranslate"><span class="pre">st</span></code>、<code class="docutils literal notranslate"><span class="pre">add</span></code>、<code class="docutils literal notranslate"><span class="pre">sub</span></code>、<code class="docutils literal notranslate"><span class="pre">min</span></code>、<code class="docutils literal notranslate"><span class="pre">max</span></code>、<code class="docutils literal notranslate"><span class="pre">neg</span></code> 和 <code class="docutils literal notranslate"><span class="pre">cvt</span></code> 指令。<code class="docutils literal notranslate"><span class="pre">.f16</span></code> 浮点类型允许出现在半精度浮点指令和 texture fetch 指令中。<code class="docutils literal notranslate"><span class="pre">.f16x2</span></code> 浮点类型仅允许出现在半精度浮点算术指令和 texture fetch 指令中。</p>
+<p>为方便起见，<code class="docutils literal notranslate"><span class="pre">ld</span></code>、<code class="docutils literal notranslate"><span class="pre">st</span></code> 和 <code class="docutils literal notranslate"><span class="pre">cvt</span></code> 指令允许源和目的数据 operand 比指令类型的大小更宽，从而可以使用常规宽度的 register 来加载、存储和转换窄值。例如，8 位或 16 位的值在加载、存储或转换为其他类型和大小的过程中，可以直接保存在 32 位或 64 位的 register 中。</p>
+</section>
+<section id="alternate-floating-point-data-formats">
+<span id="id49"></span><h3>5.2.3 替代性浮点数据格式</h3>
+<p>PTX 支持的 fundamental 浮点类型具有隐式的位表示，用于指示用于存储指数和尾数的位数。例如，<code class="docutils literal notranslate"><span class="pre">.f16</span></code> 类型表示保留 5 位用于指数、10 位用于尾数。除了 fundamental type 所假定的浮点表示之外，PTX 还允许以下替代浮点数据格式：</p>
+<dl class="simple">
+<dt>
+<code class="docutils literal notranslate"><span class="pre">bf16</span></code> data format:</dt>
+<dd>
+<p>该数据格式是一种 16 位浮点格式，使用 8 位表示指数、7 位表示尾数。包含 <code class="docutils literal notranslate"><span class="pre">bf16</span></code> 数据的 register 变量必须用 <code class="docutils literal notranslate"><span class="pre">.b16</span></code> 类型声明。</p>
+</dd>
+<dt>
+<code class="docutils literal notranslate"><span class="pre">e4m3</span></code> data format:</dt>
+<dd>
+<p>该数据格式是一种 8 位浮点格式，使用 4 位表示指数、3 位表示尾数。<code class="docutils literal notranslate"><span class="pre">e4m3</span></code> 编码不支持无穷大，且 <code class="docutils literal notranslate"><span class="pre">NaN</span></code> 值仅限于 <code class="docutils literal notranslate"><span class="pre">0x7f</span></code> 和 <code class="docutils literal notranslate"><span class="pre">0xff</span></code>。包含 <code class="docutils literal notranslate"><span class="pre">e4m3</span></code> 值的 register 变量必须使用 bit-size 类型声明。</p>
+</dd>
+<dt>
+<code class="docutils literal notranslate"><span class="pre">e5m2</span></code> data format:</dt>
+<dd>
+<p>该数据格式是一种 8 位浮点格式，使用 5 位表示指数、2 位表示尾数。包含 <code class="docutils literal notranslate"><span class="pre">e5m2</span></code> 值的 register 变量必须使用 bit-size 类型声明。</p>
+</dd>
+<dt>
+<code class="docutils literal notranslate"><span class="pre">tf32</span></code> data format:</dt>
+<dd>
+<p>该数据格式是矩阵乘加指令支持的一种特殊 32 位浮点格式，其范围与 <code class="docutils literal notranslate"><span class="pre">.f32</span></code> 相同，但精度降低（&gt;=10 位）。<code class="docutils literal notranslate"><span class="pre">tf32</span></code> 格式的内部布局由实现定义。PTX 支持从单精度 <code class="docutils literal notranslate"><span class="pre">.f32</span></code> 类型转换到 <code class="docutils literal notranslate"><span class="pre">tf32</span></code> 格式。包含 <code class="docutils literal notranslate"><span class="pre">tf32</span></code> 数据的 register 变量必须用 <code class="docutils literal notranslate"><span class="pre">.b32</span></code> 类型声明。</p>
+</dd>
+<dt>
+<code class="docutils literal notranslate"><span class="pre">e2m1</span></code> data format:</dt>
+<dd>
+<p>该数据格式是一种 4 位浮点格式，使用 2 位表示指数、1 位表示尾数。<code class="docutils literal notranslate"><span class="pre">e2m1</span></code> 编码不支持无穷大和 <code class="docutils literal notranslate"><span class="pre">NaN</span></code>。<code class="docutils literal notranslate"><span class="pre">e2m1</span></code> 值必须以指定的打包格式 <code class="docutils literal notranslate"><span class="pre">e2m1x2</span></code> 使用。包含两个整数 <code class="docutils literal notranslate"><span class="pre">e2m1</span></code> 值的 register 变量必须用 <code class="docutils literal notranslate"><span class="pre">.b8</span></code> 类型声明。</p>
+</dd>
+<dt>
+<code class="docutils literal notranslate"><span class="pre">e2m3</span></code> data format:</dt>
+<dd>
+<p>该数据格式是一种 6 位浮点格式，使用 2 位表示指数、3 位表示尾数。<code class="docutils literal notranslate"><span class="pre">e2m3</span></code> 编码不支持无穷大和 <code class="docutils literal notranslate"><span class="pre">NaN</span></code>。<code class="docutils literal notranslate"><span class="pre">e2m3</span></code> 值必须以指定的打包格式 <code class="docutils literal notranslate"><span class="pre">e2m3x2</span></code> 使用。包含两个整数 <code class="docutils literal notranslate"><span class="pre">e2m3</span></code> 值的 register 变量必须用 <code class="docutils literal notranslate"><span class="pre">.b16</span></code> 类型声明，其中每个 <code class="docutils literal notranslate"><span class="pre">.b8</span></code> 元素包含 6 位浮点值和用零填充的 2 个最高位（MSB）。</p>
+</dd>
+<dt>
+<code class="docutils literal notranslate"><span class="pre">e3m2</span></code> data format:</dt>
+<dd>
+<p>该数据格式是一种 6 位浮点格式，使用 3 位表示指数、2 位表示尾数。<code class="docutils literal notranslate"><span class="pre">e3m2</span></code> 编码不支持无穷大和 <code class="docutils literal notranslate"><span class="pre">NaN</span></code>。<code class="docutils literal notranslate"><span class="pre">e3m2</span></code> 值必须以指定的打包格式 <code class="docutils literal notranslate"><span class="pre">e3m2x2</span></code> 使用。包含两个整数 <code class="docutils literal notranslate"><span class="pre">e3m2</span></code> 值的 register 变量必须用 <code class="docutils literal notranslate"><span class="pre">.b16</span></code> 类型声明，其中每个 <code class="docutils literal notranslate"><span class="pre">.b8</span></code> 元素包含 6 位浮点值和用零填充的 2 个最高位（MSB）。</p>
+</dd>
+<dt>
+<code class="docutils literal notranslate"><span class="pre">ue8m0</span></code> data format:</dt>
+<dd>
+<p>该数据格式是一种 8 位无符号浮点格式，使用 8 位表示指数、0 位表示尾数。<code class="docutils literal notranslate"><span class="pre">ue8m0</span></code> 编码不支持无穷大。<code class="docutils literal notranslate"><span class="pre">NaN</span></code> 值仅限于 <code class="docutils literal notranslate"><span class="pre">0xff</span></code>。<code class="docutils literal notranslate"><span class="pre">ue8m0</span></code> 值必须以指定的打包格式 <code class="docutils literal notranslate"><span class="pre">ue8m0x2</span></code> 使用。包含两个 <code class="docutils literal notranslate"><span class="pre">ue8m0</span></code> 值的 register 变量必须用 <code class="docutils literal notranslate"><span class="pre">.b16</span></code> 类型声明。</p>
+</dd>
+<dt>
+<code class="docutils literal notranslate"><span class="pre">ue4m3</span></code> data format:</dt>
+<dd>
+<p>该数据格式是一种 7 位无符号浮点格式，使用 4 位表示指数、3 位表示尾数。<code class="docutils literal notranslate"><span class="pre">ue4m3</span></code> 编码不支持无穷大。<code class="docutils literal notranslate"><span class="pre">NaN</span></code> 值仅限于 <code class="docutils literal notranslate"><span class="pre">0x7f</span></code>。包含单个 <code class="docutils literal notranslate"><span class="pre">ue4m3</span></code> 值的 register 变量必须用最高位（MSB）用零填充的 <code class="docutils literal notranslate"><span class="pre">.b8</span></code> 类型声明。</p>
+</dd>
+</dl>
+<p>替代数据格式不能用作 fundamental type。它们被某些指令作为源或目的格式所支持。</p>
+</section>
+<section id="fixed-point-data-formats">
+<span id="id50"></span><h3>5.2.4 定点数据格式</h3>
+<p>PTX 支持以下定点数据格式：</p>
+<dl>
+<dt>
+<code class="docutils literal notranslate"><span class="pre">s2f6</span></code> data format:</dt>
+<dd>
+<p>该数据格式是 8 位有符号 2 的补码整数，具有 2 个符号-整数位和 6 个小数位，形式为 <strong>xx.xxxxxx</strong>。<code class="docutils literal notranslate"><span class="pre">s2f6</span></code> 编码不支持无穷大和 <code class="docutils literal notranslate"><span class="pre">NaN</span></code>。</p>
+<p><code class="docutils literal notranslate"><span class="pre">s2f6</span></code> 值 = s8 值 * 2^(-6)
+正最大值表示 = 01.111111 = 127 * 2^(-6) = 1.984375
+负最大值表示 = 10.000000 = -128 * 2^(-6) = -2.0</p>
+</dd>
+</dl>
+</section>
+<section id="packed-data-types">
+<span id="id51"></span><h3>5.2.5 打包数据类型（Packed Data Types）</h3>
+<p>某些 PTX 指令并行地对两组或多组输入进行操作，并产生两组或多组输出。此类指令可以使用以打包格式存储的数据。PTX 支持将两个或四个相同标量数据类型的值打包到一个更大的单一值中。该打包值被视为一种 <em>packed data type</em>（打包数据类型）的值。本节描述 PTX 支持的打包数据类型。</p>
+<section id="packed-floating-point-data-types">
+<span id="id52"></span><h4>5.2.5.1 打包浮点数据类型</h4>
+<p>PTX 支持多种变体的打包浮点数据类型。其中，只有 <code class="docutils literal notranslate"><span class="pre">.f16x2</span></code> 被支持为 fundamental type，而其他类型不能用作 fundamental type——它们作为某些指令上的指令类型被支持。在使用带有此类非 fundamental type 的指令时，operand 数据变量必须是适当大小的 bit 类型。例如，对于指令类型为 <code class="docutils literal notranslate"><span class="pre">.bf16x2</span></code> 的指令，所有 operand 变量都必须是 <code class="docutils literal notranslate"><span class="pre">.b32</span></code> 类型。<a class="reference internal" href="#operand-types-for-packed-floating-point-instruction-type"><span class="std std-numref">Table 9</span></a> 描述了 PTX 中各种变体的打包浮点数据类型。</p>
+<table class="table-no-stripes docutils align-default" id="operand-types-for-packed-floating-point-instruction-type">
+<caption>
+<span class="caption-number">Table 9 </span><span class="caption-text">Operand types for packed floating point instruction type.</span>
+</caption>
+<colgroup>
+<col style="width: 23%"/>
+<col style="width: 27%"/>
+<col style="width: 19%"/>
+<col style="width: 31%"/>
+</colgroup>
+<thead>
+<tr class="row-odd">
+<th class="head"><p>Packed floating
+point type</p></th>
+<th class="head"><p>Number of elements
+contained in a
+packed format</p></th>
+<th class="head"><p>Type of each
+element</p></th>
+<th class="head"><p>Register variable type
+to be used in the
+declaration</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.f16x2</span></code></p></td>
+<td rowspan="10"><p>Two</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.f16</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.f16x2</span></code> or <code class="docutils literal notranslate"><span class="pre">.b32</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">.f32x2</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.f32</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.b64</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.bf16x2</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.bf16</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.b32</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">.e4m3x2</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.e4m3</span></code></p></td>
+<td rowspan="6"><p><code class="docutils literal notranslate"><span class="pre">.b16</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.e5m2x2</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.e5m2</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">.e2m3x2</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.e2m3</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.e3m2x2</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.e3m2</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">.ue8m0x2</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.ue8m0</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.s2f6x2</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.s2f6</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">.e2m1x2</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.e2m1</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.b8</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.e4m3x4</span></code></p></td>
+<td rowspan="5"><p>Four</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.e4m3</span></code></p></td>
+<td rowspan="4"><p><code class="docutils literal notranslate"><span class="pre">.b32</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">.e5m2x4</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.e5m2</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.e2m3x4</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.e2m3</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">.e3m2x4</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.e3m2</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.e2m1x4</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.e2m1</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.b16</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="packed-integer-data-types">
+<span id="id53"></span><h4>5.2.5.2 打包整数数据类型</h4>
+<p>PTX 支持四种变体的打包整数数据类型：<code class="docutils literal notranslate"><span class="pre">.u16x2</span></code>、<code class="docutils literal notranslate"><span class="pre">.s16x2</span></code>、<code class="docutils literal notranslate"><span class="pre">.u8x4</span></code> 和 <code class="docutils literal notranslate"><span class="pre">.s8x4</span></code>。<code class="docutils literal notranslate"><span class="pre">.u16x2</span></code>、<code class="docutils literal notranslate"><span class="pre">.s16x2</span></code> 打包数据类型由两个 <code class="docutils literal notranslate"><span class="pre">.u16</span></code> 或 <code class="docutils literal notranslate"><span class="pre">.s16</span></code> 值组成。<code class="docutils literal notranslate"><span class="pre">.u8x4</span></code>、<code class="docutils literal notranslate"><span class="pre">.s8x4</span></code> 打包数据类型由四个 <code class="docutils literal notranslate"><span class="pre">.u8</span></code> 或 <code class="docutils literal notranslate"><span class="pre">.s8</span></code> 值组成。包含 <code class="docutils literal notranslate"><span class="pre">.u16x2</span></code>、<code class="docutils literal notranslate"><span class="pre">.s16x2</span></code>、<code class="docutils literal notranslate"><span class="pre">.u8x4</span></code>、<code class="docutils literal notranslate"><span class="pre">.s8x4</span></code> 数据的 register 变量必须用 <code class="docutils literal notranslate"><span class="pre">.b32</span></code> 类型声明。打包整数数据类型不能用作 fundamental type。它们作为某些指令上的指令类型被支持。</p>
+</section>
+<section id="packed-fixed-point-data-types">
+<span id="id54"></span><h4>5.2.5.3 打包定点数据类型</h4>
+<p>PTX 支持 <code class="docutils literal notranslate"><span class="pre">.s2f6x2</span></code> 打包定点数据类型，由两个 <code class="docutils literal notranslate"><span class="pre">.s2f6</span></code> 打包定点值组成。包含 <code class="docutils literal notranslate"><span class="pre">.s2f6x2</span></code> 值的 register 变量必须用 <code class="docutils literal notranslate"><span class="pre">.b16</span></code> 类型声明。打包定点数据类型不能用作 fundamental type，仅作为指令类型被支持。</p>
+</section>
+</section>
+</section>
+<section id="texture-sampler-and-surface-types">
+<span id="id55"></span><h2>5.3 纹理采样器与表面类型</h2>
+<p>PTX 包含用于定义 texture、sampler 和 surface descriptor 变量的内置 <em>opaque</em>（不透明）类型。这些类型具有类似结构体的命名字段，但有关布局、字段顺序、基地址和总体大小的所有信息都对 PTX 程序隐藏，因此称为 <em>opaque</em>。这些 opaque 类型的使用仅限于：</p>
+<ul class="simple">
+<li><p>在 global（module）scope 内以及 kernel entry parameter 列表中定义变量。</p></li>
+<li><p>使用针对该类型命名成员的逗号分隔静态赋值表达式，对 module scope 变量进行静态初始化。</p></li>
+<li><p>通过 texture 和 surface 的加载/存储指令（<code class="docutils literal notranslate"><span class="pre">tex</span></code>、<code class="docutils literal notranslate"><span class="pre">suld</span></code>、<code class="docutils literal notranslate"><span class="pre">sust</span></code>、<code class="docutils literal notranslate"><span class="pre">sured</span></code>）引用 texture、sampler 或 surface。</p></li>
+<li><p>通过 query 指令（<code class="docutils literal notranslate"><span class="pre">txq</span></code>、<code class="docutils literal notranslate"><span class="pre">suq</span></code>）获取命名成员的值。</p></li>
+<li><p>使用 <code class="docutils literal notranslate"><span class="pre">mov</span></code> 创建指向 opaque 变量的指针，例如 <code class="docutils literal notranslate"><span class="pre">mov.u64</span> <span class="pre">reg,</span> <span class="pre">opaque_var;</span></code>。得到的指针可以被存储到内存并从内存加载、作为参数传递给函数，并被 texture 和 surface 的加载、存储以及 query 指令解引用，但该指针不能在其他情况下被视为地址，即使用 <code class="docutils literal notranslate"><span class="pre">ld</span></code> 和 <code class="docutils literal notranslate"><span class="pre">st</span></code> 指令访问该指针，或执行指针算术，都会导致未定义的结果。</p></li>
+<li><p>Opaque 变量不能出现在初始化器中，例如，不能用它来初始化指向 opaque 变量的指针。</p></li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>从 PTX ISA 3.1 版本开始支持使用指向 opaque 变量的指针对 texture 和 surface 进行间接访问，并且需要目标 <code class="docutils literal notranslate"><span class="pre">sm_20</span></code> 或更高版本。</p>
+<p>对 texture 的间接访问仅在 unified texture 模式下受支持（见下文）。</p>
+</div>
+<p>三种内置类型是 <code class="docutils literal notranslate"><span class="pre">.texref</span></code>、<code class="docutils literal notranslate"><span class="pre">.samplerref</span></code> 和 <code class="docutils literal notranslate"><span class="pre">.surfref</span></code>。对于使用 texture 和 sampler，PTX 有两种操作模式。在 <em>unified mode</em>（统一模式）下，texture 和 sampler 信息通过一个单一的 <code class="docutils literal notranslate"><span class="pre">.texref</span></code> 句柄访问。在 <em>independent mode</em>（独立模式）下，texture 和 sampler 信息各自拥有自己的句柄，允许它们分别定义并在程序中使用点进行组合。在独立模式下，<code class="docutils literal notranslate"><span class="pre">.texref</span></code> 类型中描述 sampler 属性的字段会被忽略，因为这些属性由 <code class="docutils literal notranslate"><span class="pre">.samplerref</span></code> 变量定义。</p>
+<p><a class="reference internal" href="#texture-sampler-and-surface-types-opaque-type-fields-in-unified-texture-mode"><span class="std std-numref">Table 10</span></a> 和 <a class="reference internal" href="#sampler-properties-opaque-type-fields-in-independent-texture-mode"><span class="std std-numref">Table 11</span></a> 列出了 unified 和 independent texture 模式下每种类型的命名成员。这些成员及其值与 texture <code class="docutils literal notranslate"><span class="pre">HW</span></code> 类中定义的方法和值以及通过 API 暴露的值具有精确映射。</p>
+<table class="table-no-stripes docutils align-default" id="texture-sampler-and-surface-types-opaque-type-fields-in-unified-texture-mode">
+<caption>
+<span class="caption-number">Table 10 </span><span class="caption-text">Opaque Type Fields in Unified Texture Mode</span>
+</caption>
+<colgroup>
+<col style="width: 28%"/>
+<col style="width: 32%"/>
+<col style="width: 40%"/>
+</colgroup>
+<thead>
+<tr class="row-odd">
+<th class="head"><p>Member</p></th>
+<th class="head"><p>.texref values</p></th>
+<th class="head"><p>.surfref values</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">width</span></code></p></td>
+<td colspan="2"><p>in elements</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">height</span></code></p></td>
+<td colspan="2"><p>in elements</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">depth</span></code></p></td>
+<td colspan="2"><p>in elements</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">channel_data_type</span></code></p></td>
+<td colspan="2"><p><code class="docutils literal notranslate"><span class="pre">enum</span></code> type corresponding to source language API</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">channel_order</span></code></p></td>
+<td colspan="2"><p><code class="docutils literal notranslate"><span class="pre">enum</span></code> type corresponding to source language API</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">normalized_coords</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code>, <code class="docutils literal notranslate"><span class="pre">1</span></code></p></td>
+<td><p>N/A</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">filter_mode</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">nearest</span></code>, <code class="docutils literal notranslate"><span class="pre">linear</span></code></p></td>
+<td><p>N/A</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">addr_mode_0</span></code>, <code class="docutils literal notranslate"><span class="pre">addr_mode_1</span></code>,
+<code class="docutils literal notranslate"><span class="pre">addr_mode_2</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">wrap</span></code>, <code class="docutils literal notranslate"><span class="pre">mirror</span></code>, <code class="docutils literal notranslate"><span class="pre">clamp_ogl</span></code>,
+<code class="docutils literal notranslate"><span class="pre">clamp_to_edge</span></code>, <code class="docutils literal notranslate"><span class="pre">clamp_to_border</span></code></p></td>
+<td><p>N/A</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">array_size</span></code></p></td>
+<td><p>as number of textures in a texture
+array</p></td>
+<td><p>as number of surfaces in a surface array</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">num_mipmap_levels</span></code></p></td>
+<td><p>as number of levels in a mipmapped
+texture</p></td>
+<td><p>N/A</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">num_samples</span></code></p></td>
+<td><p>as number of samples in a multi-sample
+texture</p></td>
+<td><p>N/A</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">memory_layout</span></code></p></td>
+<td><p>N/A</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1</span></code> for linear memory layout; <code class="docutils literal notranslate"><span class="pre">0</span></code> otherwise</p></td>
+</tr>
+</tbody>
+</table>
+<section id="texture-surface-properties">
+<span id="id56"></span><h3>5.3.1 纹理与表面属性</h3>
+<p>字段 <code class="docutils literal notranslate"><span class="pre">width</span></code>、<code class="docutils literal notranslate"><span class="pre">height</span></code> 和 <code class="docutils literal notranslate"><span class="pre">depth</span></code> 以每个维度的元素数量指定 texture 或 surface 的大小。</p>
+<p>字段 <code class="docutils literal notranslate"><span class="pre">channel_data_type</span></code> 和 <code class="docutils literal notranslate"><span class="pre">channel_order</span></code> 使用与源语言 API 对应的枚举类型来指定 texture 或 surface 的这些属性。例如，当前 PTX 支持的 OpenCL 枚举类型请参见 <a class="reference internal" href="#channel-data-type-and-channel-order-fields"><span class="std std-ref">Channel Data Type and Channel Order Fields</span></a>。</p>
+</section>
+<section id="sampler-properties">
+<span id="id57"></span><h3>5.3.2 采样器属性</h3>
+<p>字段 <code class="docutils literal notranslate"><span class="pre">normalized_coords</span></code> 指示 texture 或 surface 是使用范围为 [0.0, 1.0) 的归一化坐标，还是使用范围为 [0, N) 的非归一化坐标。如果未指定值，则默认值由 runtime system 根据源语言设置。</p>
+<p>字段 <code class="docutils literal notranslate"><span class="pre">filter_mode</span></code> 指定如何根据输入的 texture 坐标计算 texture 读取所返回的值。</p>
+<p>字段 <code class="docutils literal notranslate"><span class="pre">addr_mode_{0,1,2}</span></code> 定义每个维度中的寻址模式，该模式决定了如何处理越界坐标。</p>
+<p>有关这些属性的更多细节，请参见 <em>CUDA C++ Programming Guide</em>。</p>
+<table class="table-no-stripes docutils align-default" id="sampler-properties-opaque-type-fields-in-independent-texture-mode">
+<caption>
+<span class="caption-number">Table 11 </span><span class="caption-text">Opaque Type Fields in Independent Texture Mode</span>
+</caption>
+<colgroup>
+<col style="width: 26%"/>
+<col style="width: 33%"/>
+<col style="width: 19%"/>
+<col style="width: 22%"/>
+</colgroup>
+<thead>
+<tr class="row-odd">
+<th class="head"><p>Member</p></th>
+<th class="head"><p>.samplerref values</p></th>
+<th class="head"><p>.texref values</p></th>
+<th class="head"><p>.surfref values</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">width</span></code></p></td>
+<td><p>N/A</p></td>
+<td colspan="2"><p>in elements</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">height</span></code></p></td>
+<td><p>N/A</p></td>
+<td colspan="2"><p>in elements</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">depth</span></code></p></td>
+<td><p>N/A</p></td>
+<td colspan="2"><p>in elements</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">channel_data_type</span></code></p></td>
+<td><p>N/A</p></td>
+<td colspan="2"><p><code class="docutils literal notranslate"><span class="pre">enum</span></code> type corresponding to source
+language API</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">channel_order</span></code></p></td>
+<td><p>N/A</p></td>
+<td colspan="2"><p><code class="docutils literal notranslate"><span class="pre">enum</span></code> type corresponding to source
+language AP</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">normalized_coords</span></code></p></td>
+<td><p>N/A</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code>, <code class="docutils literal notranslate"><span class="pre">1</span></code></p></td>
+<td><p>N/A</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">force_unnormalized_coords</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code>, <code class="docutils literal notranslate"><span class="pre">1</span></code></p></td>
+<td><p>N/A</p></td>
+<td><p>N/A</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">filter_mode</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">nearest</span></code>, <code class="docutils literal notranslate"><span class="pre">linear</span></code></p></td>
+<td><p>ignored</p></td>
+<td><p>N/A</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">addr_mode_0</span></code>,
+<code class="docutils literal notranslate"><span class="pre">addr_mode_1</span></code>,
+<code class="docutils literal notranslate"><span class="pre">addr_mode_2</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">wrap</span></code>, <code class="docutils literal notranslate"><span class="pre">mirror</span></code>, <code class="docutils literal notranslate"><span class="pre">clamp_ogl</span></code>,
+<code class="docutils literal notranslate"><span class="pre">clamp_to_edge</span></code>, <code class="docutils literal notranslate"><span class="pre">clamp_to_border</span></code></p></td>
+<td><p>N/A</p></td>
+<td><p>N/A</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">array_size</span></code></p></td>
+<td><p>N/A</p></td>
+<td><p>as number of textures
+in a texture array</p></td>
+<td><p>as number of surfaces in
+a surface array</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">num_mipmap_levels</span></code></p></td>
+<td><p>N/A</p></td>
+<td><p>as number of levels
+in a mipmapped
+texture</p></td>
+<td><p>N/A</p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">num_samples</span></code></p></td>
+<td><p>N/A</p></td>
+<td><p>as number of samples
+in a multi-sample
+texture</p></td>
+<td><p>N/A</p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">memory_layout</span></code></p></td>
+<td><p>N/A</p></td>
+<td><p>N/A</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1</span></code> for linear memory
+layout; <code class="docutils literal notranslate"><span class="pre">0</span></code> otherwise</p></td>
+</tr>
+</tbody>
+</table>
+<p>在 independent texture 模式下，sampler 属性保存在独立的 <code class="docutils literal notranslate"><span class="pre">.samplerref</span></code> 变量中，并且这些字段在 <code class="docutils literal notranslate"><span class="pre">.texref</span></code> 变量中被禁用。在 independent texture 模式下还有一个额外的 sampler 属性 <code class="docutils literal notranslate"><span class="pre">force_unnormalized_coords</span></code>。</p>
+<p>字段 <code class="docutils literal notranslate"><span class="pre">force_unnormalized_coords</span></code> 是 <code class="docutils literal notranslate"><span class="pre">.samplerref</span></code> 变量的一个属性，允许 sampler 覆盖 texture header 的 <code class="docutils literal notranslate"><span class="pre">normalized_coords</span></code> 属性。该字段仅在 independent texture 模式下定义。当为 <code class="docutils literal notranslate"><span class="pre">True</span></code> 时，将覆盖 texture header 的设置而使用非归一化坐标；当为 <code class="docutils literal notranslate"><span class="pre">False</span></code> 时，则使用 texture header 的设置。</p>
+<p>字段 <code class="docutils literal notranslate"><span class="pre">force_unnormalized_coords</span></code> 属性用于编译 OpenCL；在 OpenCL 中，归一化坐标的属性由 sampler header 承载。要将 OpenCL 编译为 PTX，texture header 总是以 <code class="docutils literal notranslate"><span class="pre">normalized_coords</span></code> 设为 True 进行初始化，而 OpenCL 基于 sampler 的 <code class="docutils literal notranslate"><span class="pre">normalized_coords</span></code> 标志（取反后）映射到 PTX 层面的 <code class="docutils literal notranslate"><span class="pre">force_unnormalized_coords</span></code> 标志。</p>
+<p>使用这些类型的变量可以在 module scope 中声明，也可以在 kernel entry parameter 列表中声明。在 module scope 中，这些变量必须位于 <code class="docutils literal notranslate"><span class="pre">.global</span></code> state space。作为 kernel 参数时，这些变量在 <code class="docutils literal notranslate"><span class="pre">.param</span></code> state space 中声明。</p>
+<p class="rubric">Example</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.global .texref     my_texture_name;
+.global .samplerref my_sampler_name;
+.global .surfref    my_surface_name;
+</code></pre></div>
+</div>
+<p>在 module scope 声明时，这些类型可以使用为命名成员赋值的静态表达式列表进行初始化。</p>
+<p class="rubric">Example</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.global .texref tex1;
+.global .samplerref tsamp1 = { addr_mode_0 = clamp_to_border,
+                               filter_mode = nearest
+                             };
+</code></pre></div>
+</div>
+</section>
+<section id="channel-data-type-and-channel-order-fields">
+<span id="id58"></span><h3>5.3.3 通道数据类型与通道顺序字段</h3>
+<p>字段 <code class="docutils literal notranslate"><span class="pre">channel_data_type</span></code> 和 <code class="docutils literal notranslate"><span class="pre">channel_order</span></code> 具有与源语言 API 对应的枚举类型。目前，OpenCL 是唯一定义了这些字段的源语言。<a class="reference internal" href="#channel-data-type-and-channel-order-fields-opencl-channel-order-definition"><span class="std std-numref">Table 13</span></a> 和 <a class="reference internal" href="#channel-data-type-and-channel-order-fields-opencl-channel-data-type-definition"><span class="std std-numref">Table 12</span></a> 展示了 OpenCL 1.0 版本中为 channel data type 和 channel order 定义的枚举值。</p>
+<table class="table-no-stripes docutils align-default" id="channel-data-type-and-channel-order-fields-opencl-channel-data-type-definition">
+<caption>
+<span class="caption-number">Table 12 </span><span class="caption-text">OpenCL 1.0 Channel Data Type Definition</span>
+</caption>
+<colgroup>
+<col style="width: 68%"/>
+<col style="width: 32%"/>
+</colgroup>
+<tbody>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_SNORM_INT8</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10D0</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_SNORM_INT16</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10D1</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_UNORM_INT8</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10D2</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_UNORM_INT16</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10D3</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_UNORM_SHORT_565</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10D4</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_UNORM_SHORT_555</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10D5</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_UNORM_INT_101010</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10D6</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_SIGNED_INT8</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10D7</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_SIGNED_INT16</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10D8</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_SIGNED_INT32</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10D9</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_UNSIGNED_INT8</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10DA</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_UNSIGNED_INT16</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10DB</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_UNSIGNED_INT32</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10DC</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_HALF_FLOAT</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10DD</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_FLOAT</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10DE</span></code></p></td>
+</tr>
+</tbody>
+</table>
+<table class="table-no-stripes docutils align-default" id="channel-data-type-and-channel-order-fields-opencl-channel-order-definition">
+<caption>
+<span class="caption-number">Table 13 </span><span class="caption-text">OpenCL 1.0 Channel Order Definition</span>
+</caption>
+<colgroup>
+<col style="width: 60%"/>
+<col style="width: 40%"/>
+</colgroup>
+<tbody>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_R</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10B0</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_A</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10B1</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_RG</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10B2</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_RA</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10B3</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_RGB</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10B4</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_RGBA</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10B5</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_BGRA</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10B6</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_ARGB</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10B7</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_INTENSITY</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10B8</span></code></p></td>
+</tr>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">CL_LUMINANCE</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0x10B9</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+<section id="variables">
+<span id="id59"></span><h2>5.4 变量（Variables）</h2>
+<div class="cn-lead"><b>【译】</b>变量用 .global/.shared/.local/.const/.reg/.param 等指令声明，可带维度（向量、数组）与对齐/属性修饰；声明的状态空间决定其存储位置与可见性。</div><p>在 PTX 中，变量声明同时描述变量的类型和其 state space。除了 fundamental type 之外，PTX 还支持简单聚合对象（如向量和数组）的类型。</p>
+<section id="variable-declarations">
+<span id="id60"></span><h3>5.4.1 变量声明（Variable Declarations）</h3>
+<p>所有数据的存储都通过变量声明来指定。每个变量必须位于前一节枚举的某一个 state space 中。</p>
+<p>变量声明指明变量所在的 state space、其类型和大小、变量名、可选的数组大小、可选的初始化器，以及变量的可选固定地址。</p>
+<p>Predicate 变量只能声明在 register state space 中。</p>
+<p class="rubric">Examples</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.global .u32 loc;
+.reg    .s32 i;
+.const  .f32 bias[] = {-1.0, 1.0};
+.global .u8  bg[4] = {0, 0, 0, 0};
+.reg    .v4 .f32 accel;
+.reg    .pred p, q, r;
+</code></pre></div>
+</div>
+</section>
+<section id="vectors">
+<span id="id61"></span><h3>5.4.2 向量（Vectors）</h3>
+<p>支持有限长度的向量类型。任何非 predicate 的 fundamental type 的、长度为 2 和 4 的向量都可以通过在类型前加 <code class="docutils literal notranslate"><span class="pre">.v2</span></code> 或 <code class="docutils literal notranslate"><span class="pre">.v4</span></code> 来声明。向量必须基于 fundamental type，并且可以驻留在 register space 中。向量的长度不能超过 128 位；例如，不允许 <code class="docutils literal notranslate"><span class="pre">.v4</span> <span class="pre">.f64</span></code>。三元素向量可以通过使用 <code class="docutils literal notranslate"><span class="pre">.v4</span></code> 向量来处理，其中第四个元素用于填充。这是三维 grid、texture 等常见的情况。</p>
+<p class="rubric">Examples</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.global .v4 .f32 V;   // a length-4 vector of floats
+.shared .v2 .u16 uv;  // a length-2 vector of unsigned ints
+.global .v4 .b8  v;   // a length-4 vector of bytes
+</code></pre></div>
+</div>
+<p>默认情况下，向量变量按照其总体大小（向量长度乘以基础类型大小）的整数倍对齐，以便支持要求地址按访问大小整数倍对齐的向量加载和存储指令。</p>
+</section>
+<section id="array-declarations">
+<span id="id62"></span><h3>5.4.3 数组声明（Array Declarations）</h3>
+<p>提供数组声明是为了让程序员预留空间。要声明数组，变量名后面跟随类似于 C 语言中定长数组声明的维度声明。每个维度的大小是一个常量表达式。</p>
+<p class="rubric">Examples</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.local  .u16 kernel[19][19];
+.shared .u8  mailbox[128];
+</code></pre></div>
+</div>
+<p>数组的大小指定了应当预留多少个元素。对于上面 <em>kernel</em> 数组的声明，预留了 19*19 = 361 个 halfword，总计 722 字节。</p>
+<p>当使用初始化器声明时，可以省略数组的第一维。第一维数组的大小由数组初始化器中元素的数量决定。</p>
+<p class="rubric">Examples</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.global .u32 index[] = { 0, 1, 2, 3, 4, 5, 6, 7 };
+.global .s32 offset[][2] = { {-1, 0}, {0, -1}, {1, 0}, {0, 1} };
+</code></pre></div>
+</div>
+<p>数组 <em>index</em> 有八个元素，数组 <em>offset</em> 是一个 4x2 的数组。</p>
+</section>
+<section id="initializers">
+<span id="id63"></span><h3>5.4.4 初始化器（Initializers）</h3>
+<p>已声明的变量可以使用类似于 C/C++ 的语法指定初始值，即在变量名后面跟一个等号和该变量的初始值（一个或多个）。标量取单个值，而向量和数组取花括号内的嵌套值列表（嵌套层次与声明的维度相匹配）。</p>
+<p>与 C 语言一样，数组初始化器可以是不完整的，即初始化器元素的数量可能少于相应数组维度的范围，剩余数组位置初始化为该指定数组类型的默认值。</p>
+<p class="rubric">Examples</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.const  .f32 vals[8] = { 0.33, 0.25, 0.125 };
+.global .s32 x[3][2] = { {1,2}, {3} };
+</code></pre></div>
+</div>
+<p>is equivalent to</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.const  .f32 vals[8] = { 0.33, 0.25, 0.125, 0.0, 0.0, 0.0, 0.0, 0.0 };
+.global .s32 x[3][2] = { {1,2}, {3,0}, {0,0} };
+</code></pre></div>
+</div>
+<p>目前，变量初始化仅支持 const 和 global state space。const 和 global state space 中没有显式初始化器的变量默认初始化为零。外部变量声明中不允许使用初始化器。</p>
+<p>初始化器中出现的变量名表示变量的地址；这可用于静态初始化指向变量的指针。初始化器还可以包含 <em>var+offset</em> 表达式，其中 <em>offset</em> 是加到 <em>var</em> 地址上的字节偏移。只有位于 <code class="docutils literal notranslate"><span class="pre">.global</span></code> 或 <code class="docutils literal notranslate"><span class="pre">.const</span></code> state space 的变量才能用于初始化器。默认情况下，得到的地址是变量在其 state space 中的偏移（与使用 <code class="docutils literal notranslate"><span class="pre">mov</span></code> 指令取变量地址的情况相同）。提供了一个 <code class="docutils literal notranslate"><span class="pre">generic()</span></code> 运算符，用于为初始化器中使用的变量创建通用地址。</p>
+<p>从 PTX ISA 7.1 版本开始，提供了一个 <code class="docutils literal notranslate"><span class="pre">mask()</span></code> 运算符，其中 <code class="docutils literal notranslate"><span class="pre">mask</span></code> 是一个整数立即数。<code class="docutils literal notranslate"><span class="pre">mask()</span></code> 运算符中唯一允许的表达式是整数常量表达式和表示变量地址的符号表达式。<code class="docutils literal notranslate"><span class="pre">mask()</span></code> 运算符从初始化器所用表达式中提取 <code class="docutils literal notranslate"><span class="pre">n</span></code> 个连续位，并将这些位插入到被初始化变量的最低位位置。要提取的位数 <code class="docutils literal notranslate"><span class="pre">n</span></code> 和起始位置由整数立即数 <code class="docutils literal notranslate"><span class="pre">mask</span></code> 指定。PTX ISA 7.1 仅支持从变量地址的字节边界开始提取单个字节。PTX ISA 7.3 支持将整数常量表达式作为 <code class="docutils literal notranslate"><span class="pre">mask()</span></code> 运算符中的操作数。</p>
+<p><code class="docutils literal notranslate"><span class="pre">mask</span></code> 支持的取值为：0xFF、0xFF00、0XFF0000、0xFF000000、0xFF00000000、0xFF0000000000、0xFF000000000000、0xFF00000000000000。</p>
+<p class="rubric">Examples</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.const  .u32 foo = 42;
+.global .u32 bar[] = { 2, 3, 5 };
+.global .u32 p1 = foo;          // offset of foo in .const space
+.global .u32 p2 = generic(foo); // generic address of foo
+
+// array of generic-address pointers to elements of bar
+.global .u32 parr[] = { generic(bar), generic(bar)+4,
+generic(bar)+8 };
+
+// examples using mask() operator are pruned for brevity
+.global .u8 addr[] = {0xff(foo), 0xff00(foo), 0xff0000(foo), ...};
+
+.global .u8 addr2[] = {0xff(foo+4), 0xff00(foo+4), 0xff0000(foo+4),...}
+
+.global .u8 addr3[] = {0xff(generic(foo)), 0xff00(generic(foo)),...}
+
+.global .u8 addr4[] = {0xff(generic(foo)+4), 0xff00(generic(foo)+4),...}
+
+// mask() operator with integer const expression
+.global .u8 addr5[] = { 0xFF(1000 + 546), 0xFF00(131187), ...};
+</code></pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>PTX 3.1 将初始化器中 global 变量的默认寻址方式从通用地址重新定义为 global state space 中的偏移。旧版 PTX 代码被视为对每个在初始化器中使用的 global 变量都带有一个隐式的 <code class="docutils literal notranslate"><span class="pre">generic()</span></code> 运算符。PTX 3.1 代码应当在初始化器中包含显式的 <code class="docutils literal notranslate"><span class="pre">generic()</span></code> 运算符，或者使用 <code class="docutils literal notranslate"><span class="pre">cvta.global</span></code> 在运行时构造通用地址，或者使用 <code class="docutils literal notranslate"><span class="pre">ld.global</span></code> 从非通用地址加载。</p>
+</div>
+<p>初始化器中出现的 device function 名表示该函数第一条指令的地址；这可用于初始化一个函数指针表，以便与间接调用一起使用。从 PTX ISA 3.1 版本开始，kernel function 名可以用作初始化器，例如用于初始化一个 kernel function 指针表，以便与 CUDA Dynamic Parallelism 一起从 GPU 启动 kernel。详见 <em>CUDA Dynamic Parallelism Programming Guide</em>。</p>
+<p>Labels cannot be used in initializers.</p>
+<p>保存变量或函数地址的变量应当为 <code class="docutils literal notranslate"><span class="pre">.u8</span></code>、<code class="docutils literal notranslate"><span class="pre">.u32</span></code> 或 <code class="docutils literal notranslate"><span class="pre">.u64</span></code> 类型。</p>
+<p>只有在使用了 <code class="docutils literal notranslate"><span class="pre">mask()</span></code> 运算符时才允许使用 <code class="docutils literal notranslate"><span class="pre">.u8</span></code> 类型。</p>
+<p>除 <code class="docutils literal notranslate"><span class="pre">.f16</span></code>、<code class="docutils literal notranslate"><span class="pre">.f16x2</span></code> 和 <code class="docutils literal notranslate"><span class="pre">.pred</span></code> 之外的所有类型都允许使用初始化器。</p>
+<p class="rubric">Examples</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.global .s32 n = 10;
+.global .f32 blur_kernel[][3]
+               = {{.05,.1,.05},{.1,.4,.1},{.05,.1,.05}};
+
+.global .u32 foo[] = { 2, 3, 5, 7, 9, 11 };
+.global .u64 ptr = generic(foo);   // generic address of foo[0]
+.global .u64 ptr = generic(foo)+8; // generic address of foo[2]
+</code></pre></div>
+</div>
+</section>
+<section id="alignment">
+<span id="id64"></span><h3>5.4.5 对齐（Alignment）</h3>
+<p>所有可寻址变量的存储字节对齐可以在变量声明中指定。对齐方式使用紧跟在 state space 说明符之后的可选 <code class="docutils literal notranslate"><span class="pre">.align</span></code> <em>byte-count</em> 说明符来指定。该变量将按一个 byte-count 整数倍的地址对齐。对齐值 byte-count 必须是 2 的幂。对于数组，对齐指定的是整个数组起始地址的对齐方式，而不是单个元素的对齐方式。</p>
+<p>标量和数组变量的默认对齐方式是按基础类型大小的整数倍对齐。向量变量的默认对齐方式是按整体向量大小的整数倍对齐。</p>
+<p class="rubric">Examples</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code> // allocate array at 4-byte aligned address.  Elements are bytes.
+.const .align 4 .b8 bar[8] = {0,0,0,0,2,0,0,0};
+</code></pre></div>
+</div>
+<p>注意，所有访问内存的 PTX 指令都要求地址按访问大小的整数倍对齐。内存指令的访问大小是指在内存中访问的总字节数。例如，<code class="docutils literal notranslate"><span class="pre">ld.v4.b32</span></code> 的访问大小为 16 字节，而 <code class="docutils literal notranslate"><span class="pre">atom.f16x2</span></code> 的访问大小为 4 字节。</p>
+</section>
+<section id="parameterized-variable-names">
+<span id="id65"></span><h3>5.4.6 参数化变量名</h3>
+<p>由于 PTX 支持虚拟寄存器，编译器前端生成大量 register 名是很常见的。PTX 支持一种语法来创建一组具有公共前缀字符串并附加整数后缀的变量，而不需要显式声明每一个名字。</p>
+<p>例如，假设一个程序使用大量（比如一百个）<code class="docutils literal notranslate"><span class="pre">.b32</span></code> 变量，命名为 <code class="docutils literal notranslate"><span class="pre">%r0</span></code>、<code class="docutils literal notranslate"><span class="pre">%r1</span></code>、…、<code class="docutils literal notranslate"><span class="pre">%r99</span></code>。这 100 个 register 变量可以如下声明：</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.reg .b32 %r&lt;100&gt;;    // declare %r0, %r1, ..., %r99
+</code></pre></div>
+</div>
+<p>这种简写语法可用于任何 fundamental type 和任何 state space，并且可以前置一个对齐说明符。数组变量不能以这种方式声明，也不允许使用初始化器。</p>
+</section>
+<section id="variable-attributes">
+<span id="id66"></span><h3>5.4.7 变量属性（Variable Attributes）</h3>
+<p>变量可以使用可选的 <code class="docutils literal notranslate"><span class="pre">.attribute</span></code> 指令声明，该指令允许指定变量的特殊 attribute。关键字 <code class="docutils literal notranslate"><span class="pre">.attribute</span></code> 后面跟随括号中的 attribute 说明。多个 attribute 之间用逗号分隔。</p>
+<p><a class="reference internal" href="#variable-and-function-attribute-directive-attribute"><span class="std std-ref">Variable and Function Attribute Directive: .attribute</span></a> 描述了 <code class="docutils literal notranslate"><span class="pre">.attribute</span></code> 指令。</p>
+</section>
+<section id="variable-and-function-attribute-directive-attribute">
+<span id="id67"></span><h3>5.4.8 变量与函数属性指令：.attribute</h3>
+<p class="rubric"><code class="docutils literal notranslate"><span class="pre">.attribute</span></code></p>
+<p>Variable and function attributes</p>
+<p class="rubric">Description</p>
+<p>用于指定变量或函数的特殊 attribute。</p>
+<p>The following attributes are supported.</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">.managed</span></code></dt>
+<dd>
+<p><code class="docutils literal notranslate"><span class="pre">.managed</span></code> attribute 指定该变量将分配在统一虚拟内存环境中一个 host 和系统内其他 device 都能直接引用该变量的位置。此 attribute 只能用于 <code class="docutils literal notranslate"><span class="pre">.global</span></code> state space 中的变量。详见 <em>CUDA UVM-Lite Programming Guide</em>。</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">.unified</span></code></dt>
+<dd>
+<p><code class="docutils literal notranslate"><span class="pre">.unified</span></code> attribute 指定该函数在 host 和系统内其他 device 上具有相同的内存地址。整数常量 <code class="docutils literal notranslate"><span class="pre">uuid1</span></code> 和 <code class="docutils literal notranslate"><span class="pre">uuid2</span></code> 分别指定与该 function 或变量关联的唯一标识符的高 64 位和低 64 位。此 attribute 只能用于 device function 或 <code class="docutils literal notranslate"><span class="pre">.global</span></code> state space 中的变量。带有 <code class="docutils literal notranslate"><span class="pre">.unified</span></code> attribute 的变量是只读的，必须通过为 <code class="docutils literal notranslate"><span class="pre">ld</span></code> 指令的地址 operand 指定 <code class="docutils literal notranslate"><span class="pre">.unified</span></code> 限定符来加载，否则行为未定义。</p>
+</dd>
+</dl>
+<p class="rubric">PTX ISA Notes</p>
+<ul class="simple">
+<li><p>Introduced in PTX ISA version 4.0.</p></li>
+<li><p>对 function attribute 的支持在 PTX ISA 8.0 版本中引入。</p></li>
+</ul>
+<p class="rubric">Target ISA Notes</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">.managed</span></code> attribute 需要 <code class="docutils literal notranslate"><span class="pre">sm_30</span></code> 或更高版本。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.unified</span></code> attribute 需要 <code class="docutils literal notranslate"><span class="pre">sm_90</span></code> 或更高版本。</p></li>
+</ul>
+<p class="rubric">Examples</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>.global .attribute(.managed) .s32 g;
+.global .attribute(.managed) .u64 x;
+
+.global .attribute(.unified(19,95)) .f32 f;
+
+.func .attribute(.unified(0xAB, 0xCD)) bar() { ... }
+</code></pre></div>
+</div>
+</section>
+</section>
+<section id="tensors">
+<span id="id68"></span><h2>5.5 张量（Tensors）</h2>
+<p>Tensor（张量）是内存中的一种多维矩阵结构。Tensor 由以下属性定义：</p>
+<ul class="simple">
+<li><p>Dimensionality</p></li>
+<li><p>Dimension sizes across each dimension</p></li>
+<li><p>Individual element types</p></li>
+<li><p>Tensor stride across each dimension</p></li>
+</ul>
+<p>PTX 支持可对 tensor 数据进行操作的指令。PTX tensor 指令包括：</p>
+<ul class="simple">
+<li><p>在 global 和 shared memory 之间复制数据</p></li>
+<li><p>将目的 tensor 数据与源数据进行归约（reduce）。</p></li>
+</ul>
+<p>Tensor 数据可以通过各种 <code class="docutils literal notranslate"><span class="pre">wmma.mma</span></code>、<code class="docutils literal notranslate"><span class="pre">mma</span></code> 和 <code class="docutils literal notranslate"><span class="pre">wgmma.mma_async</span></code> 指令进行操作。</p>
+<p>PTX tensor 指令将 global memory 中的 tensor 数据视为多维结构，并将 shared memory 中的数据视为线性数据。</p>
+<section id="tensor-dimension-size-format">
+<span id="id69"></span><h3>5.5.1 张量维度、大小与格式</h3>
+<p>Tensor 可以具有的维度为：1D、2D、3D、4D 或 5D。</p>
+<p>每个维度都有一个大小，表示沿该维度的元素数量。元素可以是以下类型之一：</p>
+<ul class="simple">
+<li><p>Bit-sized type: <code class="docutils literal notranslate"><span class="pre">.b32</span></code>, <code class="docutils literal notranslate"><span class="pre">.b64</span></code></p></li>
+<li><p>Sub-byte 类型：<code class="docutils literal notranslate"><span class="pre">.b4x16</span></code>、<code class="docutils literal notranslate"><span class="pre">.b4x16_p64</span></code>、<code class="docutils literal notranslate"><span class="pre">.b6x16_p32</span></code>、<code class="docutils literal notranslate"><span class="pre">.b6p2x16</span></code></p></li>
+<li><p>整数：<code class="docutils literal notranslate"><span class="pre">.u8</span></code>、<code class="docutils literal notranslate"><span class="pre">.u16</span></code>、<code class="docutils literal notranslate"><span class="pre">.u32</span></code>、<code class="docutils literal notranslate"><span class="pre">.s32</span></code>、<code class="docutils literal notranslate"><span class="pre">.u64</span></code>、<code class="docutils literal notranslate"><span class="pre">.s64</span></code></p></li>
+<li><p>浮点和替代浮点：<code class="docutils literal notranslate"><span class="pre">.f16</span></code>、<code class="docutils literal notranslate"><span class="pre">.bf16</span></code>、<code class="docutils literal notranslate"><span class="pre">.tf32</span></code>、<code class="docutils literal notranslate"><span class="pre">.f32</span></code>、<code class="docutils literal notranslate"><span class="pre">.f64</span></code>（舍入到最近的偶数）。</p></li>
+</ul>
+<p>Tensor 在每个维度的末尾都可以有填充（padding），以便为后续维度中的数据提供对齐。Tensor stride 可用于指定每个维度中的填充量。</p>
+<section id="tensor-dimension-size-format-sub-bytes">
+<span id="id70"></span><h4>5.5.1.1 亚字节类型（Sub-byte Types）</h4>
+<section id="tensor-dimension-size-format-sub-bytes-padding-align">
+<span id="id71"></span><h5>
+<span class="section-number">5.5.1.1.1. </span><a class="reference internal" href="#tensor-dimension-size-format-sub-bytes-padding-align">Padding and alignment of the sub-byte types</a>
+</h5>
+<p>Sub-byte 类型预期在 global memory 中连续地打包，并且 tensor copy 指令会通过附加空位来展开它们，如下所示：</p>
+<ol class="arabic">
+<li><p>类型 <code class="docutils literal notranslate"><span class="pre">.b4x16</span></code>：使用此类型时，不涉及填充，64 位容器中打包的十六个 <code class="docutils literal notranslate"><span class="pre">.b4</span></code> 元素在 shared memory 和 global memory 之间原样复制。</p></li>
+<li>
+<p>类型 <code class="docutils literal notranslate"><span class="pre">.b4x16_p64</span></code>：使用此类型时，十六个连续的 4 位数据从 global memory 复制到 shared memory，并附加 64 位的填充，如 <a class="reference internal" href="#tensor-dimension-size-format-sub-bytes-padding-align-b4-16-p64"><span class="std std-numref">Figure 5</span></a> 所示。</p>
+<figure class="align-center" id="tensor-dimension-size-format-sub-bytes-padding-align-b4-16-p64">
+<img alt="_images/tensor-dimension-size-format-sub-bytes-padding-align-b4-16-p64.png" class="image" src="images/ch5_tensor-dimension-size-format-sub-bytes-padding-align-b4-16-p64.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 5 </span><span class="caption-text">Layout for .b4x16_p64</span></p>
+</figcaption>
+</figure>
+<p>所添加的填充区域是未初始化的。</p>
+</li>
+<li>
+<p>类型 <code class="docutils literal notranslate"><span class="pre">.b6x16_p32</span></code>：使用此类型时，十六个 6 位数据从 global memory 复制到 shared memory，并附加 32 位的填充，如 <a class="reference internal" href="#tensor-dimension-size-format-sub-bytes-padding-align-b6-16-p32"><span class="std std-numref">Figure 6</span></a> 所示。</p>
+<figure class="align-center" id="tensor-dimension-size-format-sub-bytes-padding-align-b6-16-p32">
+<img alt="_images/tensor-dimension-size-format-sub-bytes-padding-align-b6-16-p32.png" class="image" src="images/ch5_tensor-dimension-size-format-sub-bytes-padding-align-b6-16-p32.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 6 </span><span class="caption-text">Layout for .b6x16_p32</span></p>
+</figcaption>
+</figure>
+<p>所添加的填充区域是未初始化的。</p>
+</li>
+<li>
+<p>类型 <code class="docutils literal notranslate"><span class="pre">.b6p2x16</span></code>：使用此类型时，十六个元素（每个元素在最低位 LSB 包含 6 位数据，在最高位 MSB 包含 2 位填充）从 shared memory 复制到 global memory，通过丢弃 2 位填充数据并将 6 位数据连续打包，如 <a class="reference internal" href="#tensor-dimension-size-format-sub-bytes-padding-align-b6-p2-16"><span class="std std-numref">Figure 7</span></a> 所示。</p>
+<figure class="align-center" id="tensor-dimension-size-format-sub-bytes-padding-align-b6-p2-16">
+<img alt="_images/tensor-dimension-size-format-sub-bytes-padding-align-b6-p2-16.png" class="image" src="images/ch5_tensor-dimension-size-format-sub-bytes-padding-align-b6-p2-16.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 7 </span><span class="caption-text">Layout for .b6p2x16</span></p>
+</figcaption>
+</figure>
+</li>
+</ol>
+<p>对于 <code class="docutils literal notranslate"><span class="pre">.b6x16_p32</span></code> 和 <code class="docutils literal notranslate"><span class="pre">.b4x16_p64</span></code>，所添加的填充区域是未初始化的。</p>
+<p>类型 <code class="docutils literal notranslate"><span class="pre">.b6x16_p32</span></code> 和 <code class="docutils literal notranslate"><span class="pre">.b6p2x16</span></code> 在 descriptor 中共享相同的编码值（值 15），因为这两种类型适用于不同类型的 tensor copy 操作：</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 35%"/>
+<col style="width: 65%"/>
+</colgroup>
+<thead>
+<tr class="row-odd">
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Valid Tensor Copy Direction</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p><code class="docutils literal notranslate"><span class="pre">.b6x16_p32</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.shared::cluster.global</span></code>,
+<code class="docutils literal notranslate"><span class="pre">.shared::cta.global</span></code></p></td>
+</tr>
+<tr class="row-odd">
+<td><p><code class="docutils literal notranslate"><span class="pre">.b6p2x16</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.global.shared::cta</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+</section>
+<section id="tensor-access-modes">
+<span id="id72"></span><h3>5.5.2 张量访问模式</h3>
+<p>Tensor 数据可以以两种模式访问：</p>
+<ul>
+<li>
+<p>Tiled mode:</p>
+<p>在 tiled（分块）模式下，源多维 tensor 布局在目的端保持不变。</p>
+</li>
+<li>
+<p>Im2col mode:</p>
+<p>在 im2col 模式下，源 tensor 的 Bounding Box（边界框）中的元素在目的端被重新排列为列。更多细节请参考 <a class="reference external" href="https://in.mathworks.com/help/images/ref/im2col.html">此处</a>。</p>
+</li>
+</ul>
+</section>
+<section id="tensor-tiled-mode">
+<span id="id73"></span><h3>5.5.3 分块模式（Tiled Mode）</h3>
+<p>本节讨论 tensor 和 tensor 访问在 tiled 模式下是如何工作的。</p>
+<section id="tensor-tiled-mode-bounding-box">
+<span id="id74"></span><h4>5.5.3.1 包围盒（Bounding Box）</h4>
+<p>Tensor 可以按称为 <em>Bounding Box</em>（边界框）的块进行访问。Bounding Box 与所访问的 tensor 具有相同的维度。每个 Bounding Box 的大小必须是 16 字节的整数倍。Bounding Box 的地址也必须按 16 字节对齐。</p>
+<p>Bounding Box 具有以下访问属性：</p>
+<ul class="simple">
+<li><p>Bounding Box dimension sizes</p></li>
+<li><p>Out of boundary access mode</p></li>
+<li><p>Traversal strides</p></li>
+</ul>
+<p>在 PTX tensor 指令中指定的 tensor 坐标指定了 bounding box 的起始偏移。Bounding box 的起始偏移连同 bounding box 的其余信息一起用于确定要访问的元素。</p>
+</section>
+<section id="tensor-tiled-mode-traversal-stride">
+<span id="id75"></span><h4>5.5.3.2 遍历步长（Traversal-Stride）</h4>
+<p>当 Bounding Box 沿某个维度遍历 tensor 时，traversal stride（遍历步长）指定要跳过的确切元素数量。如果不需要跳过，则必须指定默认值 1。</p>
+<p>维度 0 中的 traversal stride 可用于 <a class="reference internal" href="#tensor-interleaved-layout"><span class="std std-ref">Interleave layout</span></a>。对于非交错（non-interleaved）布局，维度 0 中的 traversal stride 必须始终为 1。</p>
+<p><a class="reference internal" href="#tensor-tiled-mode-bb-example"><span class="std std-numref">Figure 8</span></a> 展示了 tensor、tensor 大小、tensor stride、Bounding Box 大小和 traversal stride。</p>
+<figure class="align-center" id="tensor-tiled-mode-bb-example">
+<img alt="_images/tensor-tiled-mode-bounding-box-example.png" class="image" src="images/ch5_tensor-tiled-mode-bounding-box-example.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 8 </span><span class="caption-text">Tiled 模式下的 bounding box、tensor 大小与 traversal stride</span></p>
+</figcaption>
+</figure>
+</section>
+<section id="tensor-tiled-mode-oob-access">
+<span id="id76"></span><h4>5.5.3.3 越界访问</h4>
+<p>PTX tensor 操作可以检测并处理 Bounding Box 在任意维度上跨越 tensor 边界的情况。有两种模式：</p>
+<ul>
+<li>
+<p>Zero fill mode:</p>
+<p>落在 tensor 边界之外的 Bounding Box 中的元素被设置为 0。</p>
+</li>
+<li>
+<p><code class="docutils literal notranslate"><span class="pre">OOB-NaN</span></code> fill mode:</p>
+<p>落在 tensor 边界之外的 Bounding Box 中的元素被设置为一种称为 <code class="docutils literal notranslate"><span class="pre">OOB-NaN</span></code> 的特殊 NaN。</p>
+</li>
+</ul>
+<p><a class="reference internal" href="#tensor-oob-access"><span class="std std-numref">Figure 9</span></a> 展示了一个越界访问的示例。</p>
+<figure class="align-center" id="tensor-oob-access">
+<img alt="_images/tensor-oob-access.png" class="image" src="images/ch5_tensor-oob-access.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 9 </span><span class="caption-text">Out of boundary access</span></p>
+</figcaption>
+</figure>
+</section>
+<section id="tensor-tiled-scatter4-gather4-modes">
+<span id="id77"></span><h4>5.5.3.4 .tile::scatter4 与 .tile::gather4 模式</h4>
+<p>这些模式与 tiled 模式类似，但限制为只能用于 2D tensor 数据。<code class="docutils literal notranslate"><span class="pre">Tile::scatter4</span></code> 和 <code class="docutils literal notranslate"><span class="pre">Tile::gather4</span></code> 模式用于访问 tensor 数据中多个不连续的行。</p>
+<p>在 <code class="docutils literal notranslate"><span class="pre">Tile::scatter4</span></code> 模式下，单个 2D 源 tensor 被划分为 2D 目的 tensor 中的四行。在 <code class="docutils literal notranslate"><span class="pre">Tile::gather4</span></code> 模式下，源 2D tensor 中的四行被合并形成单个 2D 目的 tensor。</p>
+<p>这些模式作用于四行，因此指令将采用：</p>
+<ol class="arabic simple">
+<li><p>沿维度 0 的四个 tensor 坐标</p></li>
+<li><p>沿维度 1 的一个 tensor 坐标</p></li>
+</ol>
+<p>对于 <code class="docutils literal notranslate"><span class="pre">.tile::scatter4</span></code> 和 <code class="docutils literal notranslate"><span class="pre">.tile::gather4</span></code> 模式，不支持 interleave 布局。</p>
+<p>Tile 模式的所有其他约束和规则同样适用于这些模式。</p>
+<section id="tensor-tiled-scatter4-gather4-modes-bounding-box">
+<span id="id78"></span><h5>
+<span class="section-number">5.5.3.4.1. </span><a class="reference internal" href="#tensor-tiled-scatter4-gather4-modes-bounding-box">Bounding Box</a>
+</h5>
+<p>对于 <code class="docutils literal notranslate"><span class="pre">Tile::scatter4</span></code> 和 <code class="docutils literal notranslate"><span class="pre">Tile::gather4</span></code> 模式，四个请求坐标将在 tensor 空间中形成四个 Bounding Box。</p>
+<p><a class="reference internal" href="#tiled-scatter4-gather4-bounding-box"><span class="std std-numref">Figure 10</span></a> 展示了以起始坐标 (1, 2)、(1, 5)、(1, 0) 和 (1, 9) 为例的说明。</p>
+<p>维度 0 中 bounding box 的大小表示行的长度。维度 1 中 bounding box 的大小必须为 1。</p>
+<figure class="align-center" id="tiled-scatter4-gather4-bounding-box">
+<img alt="_images/tiled-scatter4-gather4-bounding-box.png" class="image" src="images/ch5_tiled-scatter4-gather4-bounding-box.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 10 </span><span class="caption-text">tiled::scatter4/tiled::gather4 模式的 bounding box 示例</span></p>
+</figcaption>
+</figure>
+</section>
+</section>
+</section>
+<section id="tensor-im2col-mode">
+<span id="id79"></span><h3>5.5.4 im2col 模式</h3>
+<p>Im2col 模式支持以下 tensor 维度：3D、4D 和 5D。在此模式下，tensor 数据被视为一批图像，具有以下属性：</p>
+<ul class="simple">
+<li><p>N : number of images in the batch</p></li>
+<li><p>D、H、W：3D 图像的大小（深度、高度和宽度）</p></li>
+<li><p>C: channels per image element</p></li>
+</ul>
+<p>上述属性与 3D、4D 和 5D tensor 的关联方式如下：</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 31%"/>
+<col style="width: 69%"/>
+</colgroup>
+<thead>
+<tr class="row-odd">
+<th class="head"><p>Dimension</p></th>
+<th class="head"><p>N/D/H/W/C applicability</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p>3D</p></td>
+<td><p>NWC</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>4D</p></td>
+<td><p>NHWC</p></td>
+</tr>
+<tr class="row-even">
+<td><p>5D</p></td>
+<td><p>NDHWC</p></td>
+</tr>
+</tbody>
+</table>
+<section id="tensor-im2col-mode-bounding-box">
+<span id="id80"></span><h4>5.5.4.1 包围盒</h4>
+<p>在 im2col 模式下，Bounding Box 定义在 DHW 空间中。其他维度的边界由 Pixels-per-Column 和 Channels-per-Pixel 参数指定，如下所述。</p>
+<p>Bounding Box 的维度比 tensor 的维度少两个。</p>
+<p>以下属性描述了如何在 im2col 模式下访问元素：</p>
+<ul class="simple">
+<li><p>Bounding-Box Lower-Corner</p></li>
+<li><p>Bounding-Box Upper-Corner</p></li>
+<li><p>Pixels-per-Column</p></li>
+<li><p>Channels-per-Pixel</p></li>
+</ul>
+<p><em>Bounding-box Lower-Corner</em>（边界框下角）和 <em>Bounding-box Upper-Corner</em>（边界框上角）指定 DHW 空间中 Bounding Box 的两个对角。<em>Bounding-box Lower-Corner</em> 指定坐标最小的角，<em>Bounding-box Upper-Corner</em> 指定坐标最大的角。</p>
+<p><em>Bounding-box Upper-Corner</em> 和 <em>Lower-Corner</em> 是 16 位有符号值，其取值范围随维度而不同，如下所示：</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 24%"/>
+<col style="width: 26%"/>
+<col style="width: 25%"/>
+<col style="width: 25%"/>
+</colgroup>
+<thead>
+<tr class="row-odd">
+<th class="head"></th>
+<th class="head"><p>3D</p></th>
+<th class="head"><p>4D</p></th>
+<th class="head"><p>5D</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p>Upper- / Lower- Corner sizes</p></td>
+<td><p>[-2<sup>15</sup>, 2<sup>15</sup>-1]</p></td>
+<td><p>[-2<sup>7</sup>, 2<sup>7</sup>-1]</p></td>
+<td><p>[-2<sup>4</sup>, 2<sup>4</sup>-1]</p></td>
+</tr>
+</tbody>
+</table>
+<p><a class="reference internal" href="#im2col-mode-bounding-box1"><span class="std std-numref">Figure 11</span></a> 和 <a class="reference internal" href="#im2col-mode-bounding-box2"><span class="std std-numref">Figure 12</span></a> 展示了 Upper-Corner 和 Lower-Corner。</p>
+<figure class="align-center" id="im2col-mode-bounding-box1">
+<img alt="_images/tensor-im2col-mode-bounding-box1.png" class="image" src="images/ch5_tensor-im2col-mode-bounding-box1.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 11 </span><span class="caption-text">im2col 模式 bounding box 示例 1</span></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="im2col-mode-bounding-box2">
+<img alt="_images/tensor-im2col-mode-bounding-box2.png" class="image" src="images/ch5_tensor-im2col-mode-bounding-box2.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 12 </span><span class="caption-text">im2col 模式 bounding box 示例 2</span></p>
+</figcaption>
+</figure>
+<p><em>Bounding-box Upper-Corner</em> 和 <em>Lower-Corner</em> 仅指定边界，而不指定要访问的元素数量。<em>Pixels-per-Column</em> 指定在 NDHW 空间中要访问的元素数量。</p>
+<p><em>Channels-per-Pixel</em> 指定沿 C 维度要访问的元素数量。</p>
+<p>在 PTX tensor 指令中指定的 tensor 坐标在不同维度上的行为不同：</p>
+<ul class="simple">
+<li><p>沿 N 和 C 维度：指定沿该维度的起始偏移，与 tiled 模式类似。</p></li>
+<li><p>沿 DHW 维度：指定卷积滤波器基点在 tensor 空间中的位置。滤波器角点的位置必须位于 bounding box 之内。</p></li>
+</ul>
+<p>在 im2col 模式下，由 PTX tensor 指令指定的 im2col offset 被加到滤波器基点坐标上，以确定 tensor 空间中元素的起始访问位置。</p>
+<p>im2col offset 的大小随维度而不同，其有效范围如下所示：</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 27%"/>
+<col style="width: 25%"/>
+<col style="width: 24%"/>
+<col style="width: 24%"/>
+</colgroup>
+<thead>
+<tr class="row-odd">
+<th class="head"></th>
+<th class="head"><p>3D</p></th>
+<th class="head"><p>4D</p></th>
+<th class="head"><p>5D</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p>im2col offsets range</p></td>
+<td><p>[0, 2<sup>16</sup>-1]</p></td>
+<td><p>[0, 2<sup>8</sup>-1]</p></td>
+<td><p>[0, 2<sup>5</sup>-1]</p></td>
+</tr>
+</tbody>
+</table>
+<p>以下是 im2col 模式访问的一些示例：</p>
+<ul>
+<li>
+<p>Example 1 (<a class="reference internal" href="#tensor-im2col-mode-example1"><span class="std std-numref">Figure 13</span></a>):</p>
+<div class="highlight-c++ notranslate">
+<div class="highlight"><pre><code>Tensor Size[0] = 64
+Tensor Size[1] = 9
+Tensor Size[2] = 14
+Tensor Size[3] = 64
+Pixels-per-Column = 64
+channels-per-pixel = 8
+Bounding-Box Lower-Corner W = -1
+Bounding-Box Lower-Corner H = -1
+Bounding-Box Upper-Corner W = -1
+Bounding-Box Upper-Corner H = -1.
+
+tensor coordinates = (7, 7, 4, 0)
+im2col offsets : (0, 0)
+</code></pre></div>
+</div>
+<figure class="align-center" id="tensor-im2col-mode-example1">
+<img alt="_images/tensor-im2col-mode-example1.png" class="image" src="images/ch5_tensor-im2col-mode-example1.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 13 </span><span class="caption-text">im2col mode example 1</span></p>
+</figcaption>
+</figure>
+</li>
+<li>
+<p>Example 2 (<a class="reference internal" href="#tensor-im2col-mode-example2"><span class="std std-numref">Figure 14</span></a>):</p>
+<div class="highlight-c++ notranslate">
+<div class="highlight"><pre><code>Tensor Size[0] = 64
+Tensor Size[1] = 9
+Tensor Size[2] = 14
+Tensor Size[3] = 64
+Pixels-per-Column = 64
+channels-per-pixel = 8
+Bounding-Box Lower-Corner W = 0
+Bounding-Box Lower-Corner H = 0
+Bounding-Box Upper-Corner W = -2
+Bounding-Box Upper-Corner H = -2
+
+tensor coordinates = (7, 7, 4, 0)
+im2col offsets: (2, 2)
+</code></pre></div>
+</div>
+<figure class="align-center" id="tensor-im2col-mode-example2">
+<img alt="_images/tensor-im2col-mode-example2.png" class="image" src="images/ch5_tensor-im2col-mode-example2.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 14 </span><span class="caption-text">im2col mode example 2</span></p>
+</figcaption>
+</figure>
+</li>
+</ul>
+</section>
+<section id="tensor-im2col-mode-traversal-stride">
+<span id="id81"></span><h4>5.5.4.2 遍历步长</h4>
+<p>与 tiled 模式不同，im2col 模式中的 traversal stride 不影响被访问的元素（或像素）总数。在 im2col 模式下，由 Pixels-per-Column 决定被访问的元素总数。</p>
+<p>沿 D、H 和 W 维度遍历的元素数量按该维度的 traversal stride 进行步进。</p>
+<p>以下结合 <a class="reference internal" href="#tensor-im2col-mode-example3"><span class="std std-numref">Figure 15</span></a> 的示例展示了带 traversal stride 的访问：</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>Tensor Size[0] = 64
+Tensor Size[1] = 8
+Tensor Size[2] = 14
+Tensor Size[3] = 64
+Traversal Stride = 2
+Pixels-per-Column = 32
+channels-per-pixel = 16
+Bounding-Box Lower-Corner W = -1
+Bounding-Box Lower-Corner H = -1
+Bounding-Box Upper-Corner W = -1
+Bounding-Box Upper-Corner H = -1.
+Tensor coordinates in the instruction = (7, 7, 5, 0)
+Im2col offsets in the instruction : (1, 1)
+</code></pre></div>
+</div>
+<figure class="align-center" id="tensor-im2col-mode-example3">
+<img alt="_images/tensor-im2col-mode-example3.png" class="image" src="images/ch5_tensor-im2col-mode-example3.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 15 </span><span class="caption-text">im2col 模式 traversal stride 示例</span></p>
+</figcaption>
+</figure>
+</section>
+<section id="tensor-im2col-mode-oob-access">
+<span id="id82"></span><h4>5.5.4.3 越界访问</h4>
+<p>在 im2col 模式下，当由 <em>Pixels-per-Column</em> 指定的 NDHW 空间中请求的像素数量超过图像批次中可用像素的数量时，会执行越界访问。</p>
+<p>与 tiled 模式类似，可以根据指定的 Fill-Mode 执行零填充或 <code class="docutils literal notranslate"><span class="pre">OOB-NaN</span></code> 填充。</p>
+</section>
+</section>
+<section id="tensor-im2col-w-w128-modes">
+<span id="id83"></span><h3>5.5.5 im2col::w 与 im2col::w::128 模式</h3>
+<p>这些模式与 im2col 模式类似，但限制为仅沿 <code class="docutils literal notranslate"><span class="pre">W</span></code> 维度访问元素，同时保持 <code class="docutils literal notranslate"><span class="pre">H</span></code> 和 <code class="docutils literal notranslate"><span class="pre">D</span></code> 维度不变。</p>
+<p>im2col 模式的所有约束和规则同样适用于这些模式。注意，必须设置有效的 <a class="reference internal" href="#tensor-swizzling-modes"><span class="std std-ref">Swizzling Modes</span></a>。换句话说，swizzling 模式不得是 (i) 无 swizzle，也不得是 (ii) 带有 32 字节原子性和 8 字节翻转的 128 字节 swizzle 模式。</p>
+<p>在 <code class="docutils literal notranslate"><span class="pre">im2col::w::128</span></code> 模式中访问的元素数量是固定的，等于 128。在 <code class="docutils literal notranslate"><span class="pre">im2col::w</span></code> 模式中访问的元素数量取决于 TensorMap 中的 Pixels-per-Column 字段。</p>
+<section id="tensor-im2col-w-w128-modes-bounding-box">
+<span id="id84"></span><h4>5.5.5.1 包围盒</h4>
+<p>在这些模式中，<code class="docutils literal notranslate"><span class="pre">D</span></code> 和 <code class="docutils literal notranslate"><span class="pre">H</span></code> 维度中 bounding box 的大小为 1。</p>
+<p>PTX 指令中 tensor coordinates 参数的 <code class="docutils literal notranslate"><span class="pre">D</span></code> 和 <code class="docutils literal notranslate"><span class="pre">H</span></code> 维度指定了 bounding box 在 tensor 空间中的位置。</p>
+<p>Bounding-Box <code class="docutils literal notranslate"><span class="pre">Lower-Corner-W</span></code> 和 Bounding-Box <code class="docutils literal notranslate"><span class="pre">Upper-Corner-W</span></code> 指定 <code class="docutils literal notranslate"><span class="pre">W</span></code> 维度中 Bounding Box 的两个对角。</p>
+<p>PTX 指令中 tensor coordinates 参数的 <code class="docutils literal notranslate"><span class="pre">W</span></code> 维度指定了 bounding box 中第一个要访问的元素的位置。</p>
+<p>在 <code class="docutils literal notranslate"><span class="pre">im2col::w</span></code> 模式中加载的像素数量由 TensorMap 中的 Pixels-per-Column 指定。在 <code class="docutils literal notranslate"><span class="pre">im2col::w::128</span></code> 模式中加载的像素数量始终为 128。因此，在 <code class="docutils literal notranslate"><span class="pre">im2col::w::128</span></code> 模式中忽略 Pixels-per-Column。</p>
+<p><a class="reference internal" href="#tensor-im2col-w-w128-modes-example"><span class="std std-numref">Figure 16</span></a> 展示了 <code class="docutils literal notranslate"><span class="pre">im2col::w</span></code> 和 <code class="docutils literal notranslate"><span class="pre">im2col::w:128</span></code> 模式的示例。</p>
+<figure class="align-center" id="tensor-im2col-w-w128-modes-example">
+<img alt="_images/tensor-im2col-w-w128-modes-example.png" class="image" src="images/ch5_tensor-im2col-w-w128-modes-example.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 16 </span><span class="caption-text">im2col::w 与 im2col::w::128 模式示例</span></p>
+</figcaption>
+</figure>
+<p>第一个元素只能位于 W 维度上 Bounding Box 之外，并且只能在 Bounding Box 的左侧。<a class="reference internal" href="#tensor-im2col-w-w128-modes-example2"><span class="std std-numref">Figure 17</span></a> 展示了这方面的一个示例。</p>
+<figure class="align-center" id="tensor-im2col-w-w128-modes-example2">
+<img alt="_images/tensor-im2col-w-w128-modes-example2.png" class="image" src="images/ch5_tensor-im2col-w-w128-modes-example2.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 17 </span><span class="caption-text">im2col::w 与 im2col::w::128 模式第一个元素在 Bounding Box 之外的示例</span></p>
+</figcaption>
+</figure>
+</section>
+<section id="tensor-im2col-w-w128-modes-traversal-stride">
+<span id="id85"></span><h4>5.5.5.2 遍历步长</h4>
+<p>这与 im2col 模式类似，不同之处在于仅沿 <code class="docutils literal notranslate"><span class="pre">W</span></code> 维度遍历的元素数量按 TensorMap 中指定的 traversal stride 进行步进。</p>
+</section>
+<section id="tensor-im2col-w-w128-modes-whalo">
+<span id="id86"></span><h4>5.5.5.3 wHalo</h4>
+<p>在 <code class="docutils literal notranslate"><span class="pre">im2col::w</span></code> 模式中，PTX 指令中的 <code class="docutils literal notranslate"><span class="pre">wHalo</span></code> 参数指定在图像末尾必须加载多少个滤波器 halo（边缘）元素。</p>
+<p>在 <code class="docutils literal notranslate"><span class="pre">im2col::w::128</span></code> 模式中，halo 元素在 bounding box 沿 <code class="docutils literal notranslate"><span class="pre">W</span></code> 维度的每 32 个元素之后加载。PTX 指令中的 <code class="docutils literal notranslate"><span class="pre">wHalo</span></code> 参数指定每 32 个元素之后必须加载多少个 halo 元素。</p>
+<p>以下是 <code class="docutils literal notranslate"><span class="pre">.im2col::w</span></code> 模式访问的示例：</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>Tensor Size [0] = 128
+Tensor Size [1] = 9
+Tensor Size [2] = 7
+Tensor Size [3] = 64
+Pixels-per-column = 128
+Channels-per-pixel = 64
+Bounding Box Lower Corner W = 0
+Bounding Box Upper Corner W = 0
+
+Tensor Coordinates in the instruction = (7, 2, 3, 0)
+wHalo in the instruction = 2 (as 3x3 convolution filter is used)
+</code></pre></div>
+</div>
+<p>使用上述参数的 tensor copy 操作会加载 128 个像素以及两个 halo 像素，如 <a class="reference internal" href="#tensor-im2col-w-w128-modes-example3"><span class="std std-numref">Figure 18</span></a> 所示。</p>
+<figure class="align-center" id="tensor-im2col-w-w128-modes-example3">
+<img alt="_images/tensor-im2col-w-w128-modes-example3.png" class="image" src="images/ch5_tensor-im2col-w-w128-modes-example3.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 18 </span><span class="caption-text">im2col::w 模式的 tensor copy 操作示例</span></p>
+</figcaption>
+</figure>
+<p>Halo 像素总是加载到 shared memory 中主行像素的旁边，如 <a class="reference internal" href="#tensor-im2col-w-w128-modes-example3"><span class="std std-numref">Figure 18</span></a> 所示。</p>
+<p>以下是 <code class="docutils literal notranslate"><span class="pre">.im2col::w::128</span></code> 模式访问的示例：</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>Tensor Size [0] = 128
+Tensor Size [1] = 9
+Tensor Size [2] = 7
+Tensor Size [3] = 64
+Channels-per-pixel = 64
+Bounding Box Lower Corner W = 0
+Bounding Box Upper Corner W = 0
+
+Tensor Coordinates in the instruction = (7, 2, 3, 0)
+wHalo in the instruction = 2 (as 3x3 convolution filter is used)
+</code></pre></div>
+</div>
+<p>使用上述参数的 tensor copy 操作加载 128 个元素，使得每 32 个元素之后加载 wHalo 数量的元素，如 <a class="reference internal" href="#tensor-im2col-w-w128-modes-example4"><span class="std std-numref">Figure 19</span></a> 所示。</p>
+<figure class="align-center" id="tensor-im2col-w-w128-modes-example4">
+<img alt="_images/tensor-im2col-w-w128-modes-example4.png" class="image" src="images/ch5_tensor-im2col-w-w128-modes-example4.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 19 </span><span class="caption-text">im2col::w::128 模式的 tensor copy 操作示例</span></p>
+</figcaption>
+</figure>
+</section>
+<section id="tensor-im2col-w-w128-modes-woffset">
+<span id="id87"></span><h4>5.5.5.4 wOffset</h4>
+<p>在卷积计算中，沿 <code class="docutils literal notranslate"><span class="pre">W</span></code> 维度的相同元素会在卷积滤波器覆盖范围内的不同位置被复用。根据一个像素被使用的次数，这些像素可能被加载到不同的 shared memory buffer 中。每个 buffer 可以由一次单独的 tensor copy 操作加载。</p>
+<p>tensor copy 和 prefetch 指令中的 <code class="docutils literal notranslate"><span class="pre">wOffset</span></code> 参数会调整每个 buffer 的源像素位置。buffer 的确切位置沿 <code class="docutils literal notranslate"><span class="pre">W</span></code> 维度使用以下公式进行调整：</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>Bounding Box Lower Corner W += wOffset
+Bounding Box Upper Corner W += wOffset
+W += wOffset
+</code></pre></div>
+</div>
+<p>以下是使用各种 <code class="docutils literal notranslate"><span class="pre">wHalo</span></code> 和 <code class="docutils literal notranslate"><span class="pre">wOffset</span></code> 值向多个 buffer 进行 tensor copy 的示例：</p>
+<p>Example 1:</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>Tensor Size [0] = 128
+Tensor Size [1] = 9
+Tensor Size [2] = 67
+Tensor Size [3] = 64
+Pixels-per-Column = 128
+Channels-per-pixel = 64
+Bounding Box Lower Corner W = -1
+Bounding Box Upper Corner W = 0
+Traversal Stride = 2
+
+Tensor Coordinates in the instruction = (7, 2, -1, 0)
+
+Shared memory buffer 1:
+   wHalo = 1
+   wOffset = 0
+
+Shared memory buffer 2:
+   wHalo = 0
+   wOffset = 1
+</code></pre></div>
+</div>
+<figure class="align-center" id="tensor-im2col-w-w128-modes-example5">
+<img alt="_images/tensor-im2col-w-w128-modes-example5.png" class="image" src="images/ch5_tensor-im2col-w-w128-modes-example5.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 20 </span><span class="caption-text">示例 1 向 buffer 1 的 tensor copy 操作</span></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="tensor-im2col-w-w128-modes-example6">
+<img alt="_images/tensor-im2col-w-w128-modes-example6.png" class="image" src="images/ch5_tensor-im2col-w-w128-modes-example6.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 21 </span><span class="caption-text">示例 1 向 buffer 2 的 tensor copy 操作</span></p>
+</figcaption>
+</figure>
+<p>Example 2:</p>
+<div class="highlight-text notranslate">
+<div class="highlight"><pre><code>Tensor Size [0] = 128
+Tensor Size [1] = 7
+Tensor Size [2] = 7
+Tensor Size [3] = 64
+Pixels-per-Column = 128
+Channels-per-pixel = 64
+Bounding Box Lower Corner W = -1
+Bounding Box Upper Corner W = -1
+Traversal Stride = 3
+
+Tensor Coordinates in the instruction = (7, 2, -1, 0)
+
+Shared memory buffer 1:
+   wHalo = 0
+   wOffset = 0
+
+Shared memory buffer 2:
+   wHalo = 0
+   wOffset = 1
+
+Shared memory buffer 3:
+   wHalo = 0
+   wOffset = 2
+</code></pre></div>
+</div>
+<figure class="align-center" id="tensor-im2col-w-w128-modes-example7">
+<img alt="_images/tensor-im2col-w-w128-modes-example7.png" class="image" src="images/ch5_tensor-im2col-w-w128-modes-example7.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 22 </span><span class="caption-text">示例 2 向 buffer 1 的 tensor copy 操作</span></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="tensor-im2col-w-w128-modes-example8">
+<img alt="_images/tensor-im2col-w-w128-modes-example8.png" class="image" src="images/ch5_tensor-im2col-w-w128-modes-example8.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 23 </span><span class="caption-text">示例 2 向 buffer 2 的 tensor copy 操作</span></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="tensor-im2col-w-w128-modes-example9">
+<img alt="_images/tensor-im2col-w-w128-modes-example9.png" class="image" src="images/ch5_tensor-im2col-w-w128-modes-example9.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 24 </span><span class="caption-text">示例 2 向 buffer 3 的 tensor copy 操作</span></p>
+</figcaption>
+</figure>
+</section>
+</section>
+<section id="tensor-interleaved-layout">
+<span id="id88"></span><h3>5.5.6 交织布局（Interleave layout）</h3>
+<p>Tensor 可以交错（interleaved）存储，支持以下 interleave 布局：</p>
+<ul class="simple">
+<li><p>No interleave (NDHWC)</p></li>
+<li><p>8 字节交错（NC/8DHWC8）：假设每通道 2 字节，C8 在内存中占用 16 字节。</p></li>
+<li><p>16 字节交错（NC/16HWC16）：假设每通道 4 字节，C16 在内存中占用 32 字节。</p></li>
+</ul>
+<p><em>C</em> 信息以切片（slice）的形式组织，其中连续的 C 元素被分组为 16 字节或 32 字节的块。</p>
+<p>如果通道总数不是每切片通道数的整数倍，则最后一个切片必须用零填充，使其成为完整的 16 字节或 32 字节切片。</p>
+<p>Interleaved 布局仅支持以下维度：3D、4D 和 5D。</p>
+<p>Interleave 布局不支持 <code class="docutils literal notranslate"><span class="pre">.im2col::w</span></code> 和 <code class="docutils literal notranslate"><span class="pre">.im2col::w::128</span></code> 模式。</p>
+</section>
+<section id="tensor-swizzling-modes">
+<span id="id89"></span><h3>5.5.7 交织模式（Swizzling Modes）</h3>
+<p>出于访问性能方面的原因，shared memory 中数据的布局可以与 global memory 中的不同。以下描述各种 swizzling（重排）模式：</p>
+<ul>
+<li>
+<p>No swizzle mode:</p>
+<p>在此模式下不进行 swizzling，目的数据布局与源数据布局完全相同。</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+</colgroup>
+<tbody>
+<tr class="row-odd">
+<td><p>0</p></td>
+<td><p>1</p></td>
+<td><p>2</p></td>
+<td><p>3</p></td>
+<td><p>4</p></td>
+<td><p>5</p></td>
+<td><p>6</p></td>
+<td><p>7</p></td>
+</tr>
+<tr class="row-even">
+<td><p>0</p></td>
+<td><p>1</p></td>
+<td><p>2</p></td>
+<td><p>3</p></td>
+<td><p>4</p></td>
+<td><p>5</p></td>
+<td><p>6</p></td>
+<td><p>7</p></td>
+</tr>
+<tr class="row-odd">
+<td colspan="8"><p>… Pattern repeats …</p></td>
+</tr>
+</tbody>
+</table>
+</li>
+<li>
+<p>32 byte swizzle mode:</p>
+<p>下表（其中每个元素（编号单元格）为 16 字节，且起始地址按 256 字节对齐）展示了目的数据布局的模式：</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+</colgroup>
+<tbody>
+<tr class="row-odd">
+<td><p>0</p></td>
+<td><p>1</p></td>
+<td><p>2</p></td>
+<td><p>3</p></td>
+<td><p>4</p></td>
+<td><p>5</p></td>
+<td><p>6</p></td>
+<td><p>7</p></td>
+</tr>
+<tr class="row-even">
+<td><p>1</p></td>
+<td><p>0</p></td>
+<td><p>3</p></td>
+<td><p>2</p></td>
+<td><p>5</p></td>
+<td><p>4</p></td>
+<td><p>7</p></td>
+<td><p>6</p></td>
+</tr>
+<tr class="row-odd">
+<td colspan="8"><p>… Pattern repeats …</p></td>
+</tr>
+</tbody>
+</table>
+<p>对于维度为 1x2x10x10xC16 的 NC/(32B)HWC(32B) tensor，其中最内层维度持有 16 个通道的切片、每通道 2 字节，其 32 字节 swizzle 模式的示例如 <a class="reference internal" href="#tensor-32b-swizzle"><span class="std std-numref">Figure 25</span></a> 所示。</p>
+<figure class="align-center" id="tensor-32b-swizzle">
+<img alt="_images/tensor-32B-swizzle.png" class="image" src="images/ch5_tensor-32B-swizzle.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 25 </span><span class="caption-text">32-byte swizzle mode example</span></p>
+</figcaption>
+</figure>
+<p><a class="reference internal" href="#tensor-32b-swizzle-frag"><span class="std std-numref">Figure 26</span></a> 展示了该 tensor 的两个片段：一个对应 C/(32B) = 0，另一个对应 C/(32B) = 1。</p>
+<figure class="align-center" id="tensor-32b-swizzle-frag">
+<img alt="_images/tensor-32B-swizzle-frag.png" class="image" src="images/ch5_tensor-32B-swizzle-frag.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 26 </span><span class="caption-text">32-byte swizzle mode fragments</span></p>
+</figcaption>
+</figure>
+<p><a class="reference internal" href="#tensor-32b-swizzle-dst"><span class="std std-numref">Figure 27</span></a> 展示了带 32 字节 swizzling 的目的数据布局。</p>
+<figure class="align-center" id="tensor-32b-swizzle-dst">
+<img alt="_images/tensor-32B-swizzle-dst.png" class="image" src="images/ch5_tensor-32B-swizzle-dst.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 27 </span><span class="caption-text">32 字节 swizzle 模式的目的数据布局</span></p>
+</figcaption>
+</figure>
+</li>
+<li>
+<p>64 byte swizzle mode:</p>
+<p>下表（其中每个元素（编号单元格）为 16 字节，且起始地址按 512 字节对齐）展示了目的数据布局的模式：</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+</colgroup>
+<tbody>
+<tr class="row-odd">
+<td><p>0</p></td>
+<td><p>1</p></td>
+<td><p>2</p></td>
+<td><p>3</p></td>
+<td><p>4</p></td>
+<td><p>5</p></td>
+<td><p>6</p></td>
+<td><p>7</p></td>
+</tr>
+<tr class="row-even">
+<td><p>1</p></td>
+<td><p>0</p></td>
+<td><p>3</p></td>
+<td><p>2</p></td>
+<td><p>5</p></td>
+<td><p>4</p></td>
+<td><p>7</p></td>
+<td><p>6</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>2</p></td>
+<td><p>3</p></td>
+<td><p>0</p></td>
+<td><p>1</p></td>
+<td><p>6</p></td>
+<td><p>7</p></td>
+<td><p>4</p></td>
+<td><p>5</p></td>
+</tr>
+<tr class="row-even">
+<td><p>3</p></td>
+<td><p>2</p></td>
+<td><p>1</p></td>
+<td><p>0</p></td>
+<td><p>7</p></td>
+<td><p>6</p></td>
+<td><p>5</p></td>
+<td><p>4</p></td>
+</tr>
+<tr class="row-odd">
+<td colspan="8"><p>… Pattern repeats …</p></td>
+</tr>
+</tbody>
+</table>
+<p>对于维度为 1x10x10x64、每通道 2 字节、共 32 通道的 NHWC tensor，其 64 字节 swizzle 模式的示例如 <a class="reference internal" href="#tensor-64b-swizzle"><span class="std std-numref">Figure 28</span></a> 所示。</p>
+<figure class="align-center" id="tensor-64b-swizzle">
+<img alt="_images/tensor-64B-swizzle.png" class="image" src="images/ch5_tensor-64B-swizzle.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 28 </span><span class="caption-text">64-byte swizzle mode example</span></p>
+</figcaption>
+</figure>
+<p>每个彩色单元格代表 8 个通道。<a class="reference internal" href="#tensor-64b-swizzle-src"><span class="std std-numref">Figure 29</span></a> 展示了源数据布局。</p>
+<figure class="align-center" id="tensor-64b-swizzle-src">
+<img alt="_images/tensor-64B-swizzle-src.png" class="image" src="images/ch5_tensor-64B-swizzle-src.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 29 </span><span class="caption-text">64 字节 swizzle 模式的源数据布局</span></p>
+</figcaption>
+</figure>
+<p><a class="reference internal" href="#tensor-64b-swizzle-dst"><span class="std std-numref">Figure 30</span></a> 展示了带 64 字节 swizzling 的目的数据布局。</p>
+<figure class="align-center" id="tensor-64b-swizzle-dst">
+<img alt="_images/tensor-64B-swizzle-dst.png" class="image" src="images/ch5_tensor-64B-swizzle-dst.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 30 </span><span class="caption-text">64 字节 swizzle 模式的目的数据布局</span></p>
+</figcaption>
+</figure>
+</li>
+<li>
+<p>96 byte swizzle mode:</p>
+<p>下表（其中每个元素（编号单元格）为 16 字节）展示了目的数据布局处的 swizzling 模式：</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+</colgroup>
+<tbody>
+<tr class="row-odd">
+<td><p>0</p></td>
+<td><p>1</p></td>
+<td><p>2</p></td>
+<td><p>3</p></td>
+<td><p>4</p></td>
+<td><p>5</p></td>
+<td><p>6</p></td>
+<td><p>7</p></td>
+</tr>
+<tr class="row-even">
+<td><p>1</p></td>
+<td><p>0</p></td>
+<td><p>3</p></td>
+<td><p>2</p></td>
+<td><p>5</p></td>
+<td><p>4</p></td>
+<td><p>7</p></td>
+<td><p>6</p></td>
+</tr>
+<tr class="row-odd">
+<td colspan="8"><p>… Pattern repeats …</p></td>
+</tr>
+</tbody>
+</table>
+<p>global memory 中的 data layout 及其在 shared memory 中 swizzled 后的 data layout 的示例（其中每个元素（彩色单元格）为 16 字节，且起始地址按 256 字节对齐）如 <a class="reference internal" href="#tensor-96b-swizzle"><span class="std std-numref">Figure 31</span></a> 所示。</p>
+<figure class="align-center" id="tensor-96b-swizzle">
+<img alt="_images/tensor-96B-swizzle.png" class="image" src="images/ch5_tensor-96B-swizzle.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 31 </span><span class="caption-text">96-byte swizzle mode example</span></p>
+</figcaption>
+</figure>
+</li>
+<li>
+<p>128 byte swizzle mode:</p>
+<p>128 字节 swizzling 模式支持以下子模式：</p>
+<ul>
+<li>
+<p>16-byte atomicity sub-mode:</p>
+<p>在此子模式下，16 字节的数据在 swizzling 时保持完整。</p>
+</li>
+</ul>
+<p>下表（其中每个元素（编号单元格）为 16 字节，且起始地址按 1024 字节对齐）展示了目的数据布局的模式：</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+<col style="width: 13%"/>
+</colgroup>
+<tbody>
+<tr class="row-odd">
+<td><p>0</p></td>
+<td><p>1</p></td>
+<td><p>2</p></td>
+<td><p>3</p></td>
+<td><p>4</p></td>
+<td><p>5</p></td>
+<td><p>6</p></td>
+<td><p>7</p></td>
+</tr>
+<tr class="row-even">
+<td><p>1</p></td>
+<td><p>0</p></td>
+<td><p>3</p></td>
+<td><p>2</p></td>
+<td><p>5</p></td>
+<td><p>4</p></td>
+<td><p>7</p></td>
+<td><p>6</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>2</p></td>
+<td><p>3</p></td>
+<td><p>0</p></td>
+<td><p>1</p></td>
+<td><p>6</p></td>
+<td><p>7</p></td>
+<td><p>4</p></td>
+<td><p>5</p></td>
+</tr>
+<tr class="row-even">
+<td><p>3</p></td>
+<td><p>2</p></td>
+<td><p>1</p></td>
+<td><p>0</p></td>
+<td><p>7</p></td>
+<td><p>6</p></td>
+<td><p>5</p></td>
+<td><p>4</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>4</p></td>
+<td><p>5</p></td>
+<td><p>6</p></td>
+<td><p>7</p></td>
+<td><p>0</p></td>
+<td><p>1</p></td>
+<td><p>2</p></td>
+<td><p>3</p></td>
+</tr>
+<tr class="row-even">
+<td><p>5</p></td>
+<td><p>4</p></td>
+<td><p>7</p></td>
+<td><p>6</p></td>
+<td><p>1</p></td>
+<td><p>0</p></td>
+<td><p>3</p></td>
+<td><p>2</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>6</p></td>
+<td><p>7</p></td>
+<td><p>4</p></td>
+<td><p>5</p></td>
+<td><p>2</p></td>
+<td><p>3</p></td>
+<td><p>0</p></td>
+<td><p>1</p></td>
+</tr>
+<tr class="row-even">
+<td><p>7</p></td>
+<td><p>6</p></td>
+<td><p>5</p></td>
+<td><p>4</p></td>
+<td><p>3</p></td>
+<td><p>2</p></td>
+<td><p>1</p></td>
+<td><p>0</p></td>
+</tr>
+<tr class="row-odd">
+<td colspan="8"><p>… Pattern repeats …</p></td>
+</tr>
+</tbody>
+</table>
+<p>对于维度为 1x10x10x64、每通道 2 字节、共 64 通道的 NHWC tensor，其 128 字节 swizzle 模式的示例如 <a class="reference internal" href="#tensor-128b-swizzle"><span class="std std-numref">Figure 32</span></a> 所示。</p>
+<figure class="align-center" id="tensor-128b-swizzle">
+<img alt="_images/tensor-128B-swizzle.png" class="image" src="images/ch5_tensor-128B-swizzle.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 32 </span><span class="caption-text">128-byte swizzle mode example</span></p>
+</figcaption>
+</figure>
+<p>每个彩色单元格代表 8 个通道。<a class="reference internal" href="#tensor-128b-swizzle-src"><span class="std std-numref">Figure 33</span></a> 展示了源数据布局。</p>
+<figure class="align-center" id="tensor-128b-swizzle-src">
+<img alt="_images/tensor-128B-swizzle-src.png" class="image" src="images/ch5_tensor-128B-swizzle-src.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 33 </span><span class="caption-text">128 字节 swizzle 模式的源数据布局</span></p>
+</figcaption>
+</figure>
+<p><a class="reference internal" href="#tensor-128b-swizzle-dst"><span class="std std-numref">Figure 34</span></a> 展示了带 128 字节 swizzling 的目的数据布局。</p>
+<figure class="align-center" id="tensor-128b-swizzle-dst">
+<img alt="_images/tensor-128B-swizzle-dst.png" class="image" src="images/ch5_tensor-128B-swizzle-dst.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 34 </span><span class="caption-text">128 字节 swizzle 模式的目的数据布局</span></p>
+</figcaption>
+</figure>
+<ul>
+<li>
+<p>32-byte atomicity sub-mode:</p>
+<p>在此子模式下，32 字节的数据在 swizzling 时保持完整。</p>
+<p>下表（其中每个元素（编号单元格）为 16 字节）展示了目的数据布局处的 swizzling 模式：</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 25%"/>
+<col style="width: 25%"/>
+<col style="width: 25%"/>
+<col style="width: 25%"/>
+</colgroup>
+<tbody>
+<tr class="row-odd">
+<td><p>0   1</p></td>
+<td><p>2   3</p></td>
+<td><p>4   5</p></td>
+<td><p>6   7</p></td>
+</tr>
+<tr class="row-even">
+<td><p>2   3</p></td>
+<td><p>0   1</p></td>
+<td><p>6   7</p></td>
+<td><p>4   5</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>4   5</p></td>
+<td><p>6   7</p></td>
+<td><p>0   1</p></td>
+<td><p>2   3</p></td>
+</tr>
+<tr class="row-even">
+<td><p>6   7</p></td>
+<td><p>4   5</p></td>
+<td><p>2   3</p></td>
+<td><p>0   1</p></td>
+</tr>
+<tr class="row-odd">
+<td colspan="4"><p>… Pattern repeats …</p></td>
+</tr>
+</tbody>
+</table>
+<p>此子模式要求 shared memory 中的 32 字节对齐。</p>
+<p>global memory 中的 data layout 及其在 shared memory 中 swizzled 后的 data layout 的示例（其中每个元素（彩色单元格）为 16 字节）如 <a class="reference internal" href="#tensor-128b-swizzle-32b-atom"><span class="std std-numref">Figure 35</span></a> 所示。</p>
+<figure class="align-center" id="tensor-128b-swizzle-32b-atom">
+<img alt="_images/tensor-128B-swizzle-32B-atom.png" class="image" src="images/ch5_tensor-128B-swizzle-32B-atom.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 35 </span><span class="caption-text">具有 32 字节原子性的 128 字节 swizzle 模式示例</span></p>
+</figcaption>
+</figure>
+</li>
+<li>
+<p>具有 8 字节翻转的 32 字节原子性子模式：</p>
+<p>此子模式的 swizzling 模式与 32 字节原子性子模式类似，不同之处在于在每一个交替的 shared memory 行中，16 字节数据内的相邻 8 字节会发生翻转（flip）。注意，此模式仅在 <code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code> 将复制方向指定为 <code class="docutils literal notranslate"><span class="pre">.shared::cluster.global</span></code> 或 <code class="docutils literal notranslate"><span class="pre">.shared::cta.global</span></code> 时才合法。</p>
+<p>global memory 中的 data layout 及其在 shared memory 中 swizzled 后的 data layout 的示例（其中每个元素（彩色单元格）为 16 字节，每个 16 字节彩色单元格中的两个 8 字节子元素被展示出来以体现翻转）如 <a class="reference internal" href="#tensor-128b-swizzle-32b-atom-8b-flip"><span class="std std-numref">Figure 36</span></a> 所示。</p>
+<figure class="align-center" id="tensor-128b-swizzle-32b-atom-8b-flip">
+<img alt="_images/tensor-128B-swizzle-32B-atom-8B-flip.png" class="image" src="images/ch5_tensor-128B-swizzle-32B-atom-8B-flip.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 36 </span><span class="caption-text">具有 8 字节翻转的 32 字节原子性的 128 字节 swizzle 模式示例</span></p>
+</figcaption>
+</figure>
+</li>
+<li>
+<p>64-byte atomicity sub-mode:</p>
+<p>在此子模式下，64 字节的数据在 swizzling 时保持完整。</p>
+<p>下表（其中每个元素（编号单元格）为 16 字节）展示了目的数据布局处的 swizzling 模式：</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 50%"/>
+<col style="width: 50%"/>
+</colgroup>
+<tbody>
+<tr class="row-odd">
+<td><p>0   1   2   3</p></td>
+<td><p>4   5   6   7</p></td>
+</tr>
+<tr class="row-even">
+<td><p>4   5   6   7</p></td>
+<td><p>0   1   2   3</p></td>
+</tr>
+<tr class="row-odd">
+<td colspan="2"><p>… Pattern repeats …</p></td>
+</tr>
+</tbody>
+</table>
+<p>此子模式要求 shared memory 中的 64 字节对齐。</p>
+<p>global memory 中的 data layout 及其在 shared memory 中 swizzled 后的 data layout 的示例（其中每个元素（彩色单元格）为 16 字节）如 <a class="reference internal" href="#tensor-128b-swizzle-64b-atom"><span class="std std-numref">Figure 37</span></a> 所示。</p>
+<figure class="align-center" id="tensor-128b-swizzle-64b-atom">
+<img alt="_images/tensor-128B-swizzle-64B-atom.png" class="image" src="images/ch5_tensor-128B-swizzle-64B-atom.png"/>
+<figcaption>
+<p><span class="caption-number">Figure 37 </span><span class="caption-text">具有 64 字节原子性的 128 字节 swizzle 模式示例</span></p>
+</figcaption>
+</figure>
+</li>
+</ul>
+</li>
+</ul>
+<p><a class="reference internal" href="#valid-combination-of-swizzle-atomicity-with-swizzling-mode"><span class="std std-numref">Table 14</span></a> 列出了 swizzle 原子性与 swizzling 模式的有效组合。</p>
+<table class="table-no-stripes docutils align-default" id="valid-combination-of-swizzle-atomicity-with-swizzling-mode">
+<caption>
+<span class="caption-number">Table 14 </span><span class="caption-text">Valid combination of swizzle-atomicity with swizzling-mode</span>
+</caption>
+<colgroup>
+<col style="width: 46%"/>
+<col style="width: 54%"/>
+</colgroup>
+<thead>
+<tr class="row-odd">
+<th class="head"><p>Swizzling Mode</p></th>
+<th class="head"><p>Swizzle-Atomicity</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p>No Swizzling</p></td>
+<td><p>–</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>32B Swizzling Mode</p></td>
+<td><p>16B</p></td>
+</tr>
+<tr class="row-even">
+<td><p>64B Swizzling Mode</p></td>
+<td><p>16B</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>96B Swizzling Mode</p></td>
+<td><p>16B</p></td>
+</tr>
+<tr class="row-even">
+<td><p>128B Swizzling Mode</p></td>
+<td>
+<ul class="simple">
+<li><p>16B</p></li>
+<li><p>32B</p></li>
+<li><p>32B + 8B-flip</p></li>
+<li><p>64B</p></li>
+</ul>
+</td>
+</tr>
+</tbody>
+</table>
+<p>当 <code class="docutils literal notranslate"><span class="pre">dstMem</span></code> shared memory 地址位于以下边界时，swizzle base offset 的值为 0：</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 31%"/>
+<col style="width: 69%"/>
+</colgroup>
+<thead>
+<tr class="row-odd">
+<th class="head"><p>Swizzling Mode</p></th>
+<th class="head"><p>Starting address of the repeating pattern</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p>128-Byte swizzle</p></td>
+<td><p>1024-Byte boundary</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>96-Byte swizzle</p></td>
+<td><p>256-Byte boundary</p></td>
+</tr>
+<tr class="row-even">
+<td><p>64-Byte swizzle</p></td>
+<td><p>512-Byte boundary</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>32-Byte swizzle</p></td>
+<td><p>256-Byte boundary</p></td>
+</tr>
+</tbody>
+</table>
+<p>否则，swizzle base offset 是一个非零值，使用以下公式计算：</p>
+<table class="table-no-stripes docutils align-default">
+<colgroup>
+<col style="width: 36%"/>
+<col style="width: 64%"/>
+</colgroup>
+<thead>
+<tr class="row-odd">
+<th class="head"><p>Swizzling Mode</p></th>
+<th class="head"><p>Formula</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even">
+<td><p>128-Byte swizzle</p></td>
+<td><p>base offset = (dstMem / 128) % 8</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>96-Byte swizzle</p></td>
+<td><p>base offset = (dstMem / 128) % 2</p></td>
+</tr>
+<tr class="row-even">
+<td><p>64-Byte swizzle</p></td>
+<td><p>base offset = (dstMem / 128) % 4</p></td>
+</tr>
+<tr class="row-odd">
+<td><p>32-Byte swizzle</p></td>
+<td><p>base offset = (dstMem / 128) % 2</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="tensor-tensormap">
+<span id="id90"></span><h3>5.5.8 张量映射（Tensor-map）</h3>
+<p>Tensor-map 是一个 128 字节的 opaque 对象，可以位于 <code class="docutils literal notranslate"><span class="pre">.const</span></code> space、<code class="docutils literal notranslate"><span class="pre">.param</span></code>（kernel function parameter）space 或 <code class="docutils literal notranslate"><span class="pre">.global</span></code> space 中，用于描述前文各节所述的 tensor 属性以及 tensor 数据的访问属性。</p>
+<p>Tensor-Map 可以使用 CUDA API 创建。更多细节请参考 <em>CUDA programming guide</em>。</p>
+</section>
+</section>
+</section></body></html><div class="footer">本页由 AI 对照 NVIDIA 官方 PTX ISA 文档翻译，结合 CUDA 背景改写，仅供参考。原文：https://docs.nvidia.com/cuda/parallel-thread-execution/index.html</div></body></html>

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PTX ISA 9.3 中文翻译 · 第 1 章 引言</title>
+<style>
+  body { font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", serif; line-height: 1.8; max-width: 860px; margin: 40px auto; padding: 0 24px; color: #1a1a1a; }
+  h1 { font-size: 28px; border-bottom: 3px solid #76b900; padding-bottom: 10px; color: #2c2c2c; }
+  h1 .en { font-size: 16px; color: #76b900; font-weight: normal; }
+  h2 { font-size: 22px; margin-top: 36px; color: #333; border-left: 5px solid #76b900; padding-left: 12px; }
+  h3 { font-size: 18px; margin-top: 28px; color: #444; }
+  p { margin: 14px 0; text-align: justify; }
+  ul, ol { margin: 14px 0; padding-left: 28px; }
+  li { margin: 8px 0; }
+  code { background: #f3f6f0; border: 1px solid #d8e3cc; border-radius: 4px; padding: 1px 6px; font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.92em; color: #2b5d00; }
+  .note { background: #f7faf2; border: 1px solid #d8e3cc; border-left: 4px solid #76b900; padding: 12px 16px; margin: 18px 0; border-radius: 4px; font-size: 0.95em; }
+  .note b { color: #4a7000; }
+  .disclaimer { background: #fff8e6; border: 1px solid #f0d98a; border-radius: 6px; padding: 12px 16px; margin: 20px 0; font-size: 0.92em; color: #7a5c00; }
+  .term { color: #1f5c00; font-weight: 600; }
+  a { color: #2b7a00; }
+  hr { border: none; border-top: 1px solid #e2e8da; margin: 30px 0; }
+  .refs { font-size: 0.9em; color: #555; }
+</style>
+</head>
+<body>
+
+<div class="disclaimer">本页由 AI 对照 NVIDIA 官方 PTX ISA 文档翻译，结合 CUDA 背景改写，仅供参考。</div>
+
+<h1>第 1 章 引言 <span class="en">Introduction — PTX ISA 9.3</span></h1>
+
+<p>本文件描述的是 <span class="term">PTX（Parallel Thread Execution，并行线程执行——一种虚拟指令集架构）</span>。PTX 是一套底层的、以并行线程执行为核心的虚拟机与 <span class="term">ISA（Instruction Set Architecture，指令集架构）</span>。借助 PTX，GPU 被暴露成一个<strong>数据并行（data-parallel）</strong>的计算<strong>设备（device）</strong>。</p>
+
+<div class="note">
+<b>结合 CUDA 理解：</b>在 CUDA 编程模型里，开发者用 C/C++ 写出 <code>__global__</code> 函数（即 <span class="term">kernel，核函数</span>），编译器并不直接生成某个具体 GPU 的机器码，而是先生成 PTX 这种"虚拟汇编"。PTX 之所以是"虚拟"的，是因为它不绑定任何特定的硬件——它描述的是一种理想化的并行计算模型，真正落到某代 GPU 的机器码，是在程序安装/运行时由驱动中的 JIT 编译器完成的。把 GPU 看作"数据并行设备"，正是 PTX 设计的出发点：你告诉它"对一大批数据并行地做同一件事"，它负责把这事映射到硬件上。
+</div>
+
+<h2>1.1 用 GPU 实现可扩展的数据并行计算</h2>
+
+<p>在实时高清 3D 图形这种永不满足的市场需求驱动下，可编程 GPU 已经演变成高度并行、多线程、众核（many-core）的处理器，拥有惊人的算力与极高的内存带宽。GPU 尤其擅长处理这样一类问题：它们可以被表达为<strong>数据并行计算</strong>——即同一个程序被并行地施加到大量数据元素之上——并且具有<strong>高算术强度（arithmetic intensity）</strong>，也就是算术运算量与内存访问量的比值很高。由于每个数据元素执行的都是同一份程序，所以对复杂<strong>流控（flow control）</strong>的需求很低；又因为程序作用于海量数据元素且算术强度高，内存访问的延迟可以通过计算来"掩盖"，而无需依赖庞大的数据缓存。</p>
+
+<p>数据并行处理的核心思想，是把数据元素映射到并行的处理线程上。许多处理大型数据集的应用，都可以借助数据并行编程模型来加速计算。在 3D 渲染中，海量的像素与顶点被映射到并行线程；类似地，图像处理与媒体处理类应用——例如渲染后处理、视频编解码、图像缩放、立体视觉、模式识别等——也能把图像块与像素映射到并行线程。事实上，在图像渲染与处理领域之外，也有大量算法因数据并行处理而获得加速，从通用的信号处理、物理仿真，到计算金融、计算生物学，莫不如此。</p>
+
+<p>PTX 定义的是一套用于通用并行线程执行的虚拟机与 ISA。PTX 程序会在<strong>安装时（install time）</strong>被翻译为目标硬件的指令集。正是有了 PTX 到 GPU 的翻译器与驱动，NVIDIA GPU 才得以作为可编程的并行计算机来使用。</p>
+
+<div class="note">
+<b>对应到 CUDA：</b>"数据并行"正是 CUDA 编程的并行执行模型的本质——你写一个 kernel，然后用成千上万个线程同时调用它，每个线程处理数据的一个切片（比如一个像素、一个矩阵元素）。<code>grid</code>、<code>block</code>、<code>thread</code> 这套层次，正是对"把数据元素映射到并行线程"这一思想的系统化封装。而"高算术强度可以掩盖内存延迟"这一点，是 CUDA 性能优化的核心直觉：与其等内存，不如让线程去算别的东西，这正是 GPU 不靠大缓存、而靠"切换就绪线程"来隐藏延迟的设计哲学。
+</div>
+
+<h2>1.2 PTX 的目标</h2>
+
+<p>PTX 为通用并行编程提供了一套稳定的编程模型与指令集。它被设计成在支持 NVIDIA Tesla 架构所定义计算特性的 NVIDIA GPU 上高效运行。像 CUDA 与 C/C++ 这样的高级语言编译器，会生成 PTX 指令；这些指令经过优化，并进一步翻译为目标架构的原生指令。</p>
+
+<p>PTX 的目标包括以下几点：</p>
+<ul>
+  <li>提供一套<strong>跨越多代 GPU</strong> 的稳定 ISA。</li>
+  <li>使编译后应用的性能<strong>逼近原生 GPU 性能</strong>。</li>
+  <li>为 C/C++ 及其他编译器提供一套<strong>与机器无关（machine-independent）</strong> 的 ISA 作为编译目标。</li>
+  <li>为应用与中间件开发者提供一套<strong>代码分发（code distribution）</strong> 用的 ISA。</li>
+  <li>为把 PTX 映射到具体目标机器的各种优化代码生成器与翻译器，提供一套<strong>通用的源级 ISA</strong>。</li>
+  <li>方便手工编写库、性能关键 kernel 以及架构测试程序。</li>
+  <li>提供一套<strong>可扩展的编程模型</strong>，其规模可从单个 GPU 单元一路覆盖到众多并行单元。</li>
+</ul>
+
+<div class="note">
+<b>设计意图：</b>"跨越多代 GPU 稳定"是 PTX 存在的最大价值。CUDA 程序一次编译出的 PTX，可以在不同架构（如 sm_70、sm_80、sm_90）的 GPU 上由驱动重新 JIT 成对应机器码，开发者无需为每代硬件重写底层代码。而"与机器无关的 ISA"则意味着：不仅 CUDA C++ 编译器，其他语言的前端、甚至手写汇编优化，都可以以 PTX 作为统一的输出/输入格式。
+</div>
+
+<h2>1.3 PTX ISA 第 9.3 版</h2>
+
+<p>PTX ISA 9.3 版引入了以下新特性：</p>
+<ul>
+  <li>新增对 <code>mma_throughput</code> pragma（编译指示）的支持。</li>
+  <li>新增对 <code>clmad</code> 指令的支持。</li>
+  <li>为 <code>mbarrier.test_wait</code> 与 <code>mbarrier.try_wait</code> 指令新增 <code>.phase_type::*</code> 限定符。</li>
+  <li>为 <code>mbarrier.test_wait</code> 与 <code>mbarrier.try_wait</code> 指令新增 <code>reportPredicate</code> 与 <code>reportValue</code> 操作数。</li>
+  <li>为 mbarrier 指令新增 <code>.layout</code> 限定符，并新增 <code>mbarrier.check_layout</code> 指令。</li>
+  <li>新增 <code>multimem.st.async</code> 与 <code>multimem.red.async</code> 指令。</li>
+  <li>为 <code>cp.async.bulk</code>、<code>cp.reduce.async.bulk</code>、<code>multimem.cp.async.bulk</code> 与 <code>multimem.cp.reduce.async.bulk</code> 指令新增 <code>.sem</code> 与 <code>.scope</code> 限定符。</li>
+  <li>新增 <code>fabric.try_get</code>、<code>fabric.try_put</code>、<code>fabric.try_red</code>、<code>fabric.try_pullred</code>、<code>fabric.wait</code>、<code>fabric.submit</code> 指令。</li>
+  <li>为 <code>fence</code> 指令新增 <code>fence.proxy.to_proxykind::from_proxykind_fabric</code> 限定符。</li>
+  <li>新增 <code>.language</code> 指令（directive）。</li>
+</ul>
+
+<div class="note">
+<b>背景补充：</b>这一长串新增特性大多面向 Hopper（sm_90）及更新的架构，集中在几个方面：<code>mbarrier</code> 系列与线程束屏障/集群同步有关；<code>multimem</code> 与 <code>cp.async.bulk</code> 涉及跨线程块集群（cluster）的内存拷贝与规约；<code>fabric</code> 系列则指向芯片间的互连（如 NVLink/ fabric）通信。对这些特性的理解，需要结合第 2 章线程层次里的 cluster 概念。
+</div>
+
+<h2>1.4 文档结构</h2>
+
+<p>本文件的内容按以下章节组织：</p>
+<ul>
+  <li><strong>编程模型（Programming Model）</strong>——勾勒整体编程模型。</li>
+  <li><strong>PTX 机器模型（PTX Machine Model）</strong>——概述 PTX 的虚拟机模型。</li>
+  <li><strong>语法（Syntax）</strong>——描述 PTX 语言的基本语法。</li>
+  <li><strong>状态空间、类型与变量（State Spaces, Types, and Variables）</strong>——讲解状态空间、类型与变量声明。</li>
+  <li><strong>指令操作数（Instruction Operands）</strong>——描述指令的操作数。</li>
+  <li><strong>抽象 ABI（Abstracting the ABI）</strong>——描述函数与调用语法、调用约定，以及 PTX 对<strong>应用二进制接口（Application Binary Interface，ABI）</strong>的抽象支持。</li>
+  <li><strong>指令集（Instruction Set）</strong>——描述整套指令集。</li>
+  <li><strong>特殊寄存器（Special Registers）</strong>——列举特殊寄存器。</li>
+  <li><strong>指令伪操作（Directives）</strong>——列举 PTX 支持的汇编伪操作（directive）。</li>
+  <li><strong>发布说明（Release Notes）</strong>——提供 PTX ISA 2.x 及之后各版本的发布说明。</li>
+</ul>
+
+<hr>
+
+<h3>参考资料（References）</h3>
+<ul class="refs">
+  <li>754-2008 IEEE 浮点运算标准（IEEE Standard for Floating-Point Arithmetic）。ISBN 978-0-7381-5752-8，2008。<br><a href="http://ieeexplore.ieee.org/servlet/opac?punumber=4610933">http://ieeexplore.ieee.org/servlet/opac?punumber=4610933</a></li>
+  <li>The OpenCL Specification，版本 1.1，文档修订 44，2011 年 6 月 1 日。<br><a href="http://www.khronos.org/registry/cl/specs/opencl-1.1.pdf">http://www.khronos.org/registry/cl/specs/opencl-1.1.pdf</a></li>
+  <li>CUDA 编程指南（CUDA Programming Guide）。<br><a href="https://docs.nvidia.com/cuda/cuda-programming-guide/index.html">https://docs.nvidia.com/cuda/cuda-programming-guide/index.html</a></li>
+  <li>CUDA 动态并行编程指南（CUDA Dynamic Parallelism Programming Guide）。<br><a href="https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/dynamic-parallelism.html">https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/dynamic-parallelism.html</a></li>
+  <li>CUDA 原子性要求（CUDA Atomicity Requirements）。<br><a href="https://nvidia.github.io/cccl/libcudacxx/extended_api/memory_model.html#atomicity">https://nvidia.github.io/cccl/libcudacxx/extended_api/memory_model.html#atomicity</a></li>
+  <li>PTX 互操作性编写者指南（PTX Writers Guide to Interoperability）。<br><a href="https://docs.nvidia.com/cuda/ptx-writers-guide-to-interoperability/index.html">https://docs.nvidia.com/cuda/ptx-writers-guide-to-interoperability/index.html</a></li>
+</ul>
+
+</body>
+</html>

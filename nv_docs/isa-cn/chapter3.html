@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PTX ISA 第 3 章 中文翻译：PTX Machine Model（PTX 机器模型）</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #555;
+    --accent: #76b900; /* NVIDIA 绿 */
+    --border: #ddd;
+    --code-bg: #f5f7f5;
+    --note-bg: #f0f6e8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", "Segoe UI", sans-serif;
+    line-height: 1.75;
+    color: var(--fg);
+    background: var(--bg);
+    margin: 0;
+    padding: 0;
+  }
+  .disclaimer {
+    background: var(--note-bg);
+    border-left: 5px solid var(--accent);
+    padding: 12px 20px;
+    margin: 0;
+    font-size: 14px;
+    color: #2d3a1f;
+  }
+  .wrap {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 32px 24px 80px;
+  }
+  h1 { font-size: 30px; border-bottom: 3px solid var(--accent); padding-bottom: 10px; }
+  h2 { font-size: 24px; margin-top: 48px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { font-size: 19px; margin-top: 32px; color: #333; }
+  p { margin: 14px 0; }
+  ul, ol { margin: 14px 0; padding-left: 28px; }
+  li { margin: 6px 0; }
+  code {
+    background: var(--code-bg);
+    border: 1px solid #e3e8e3;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 13.5px;
+    color: #b5330f;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid #e3e8e3;
+    border-radius: 6px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #1a1a1a;
+  }
+  pre code { background: none; border: none; padding: 0; color: inherit; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 18px 0;
+    font-size: 14px;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #f0f4f0; }
+  figure {
+    margin: 24px 0;
+    text-align: center;
+  }
+  figure img {
+    max-width: 100%;
+    height: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+  }
+  figcaption {
+    margin-top: 8px;
+    font-size: 13.5px;
+    color: var(--muted);
+  }
+  .term {
+    font-weight: 600;
+    color: #1f5c00;
+  }
+  .term-en {
+    font-style: italic;
+    color: #555;
+    font-weight: 400;
+  }
+  .note {
+    background: var(--note-bg);
+    border: 1px solid #cfe0b8;
+    border-radius: 6px;
+    padding: 10px 16px;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  .note b { color: #4a6b1f; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+  .toc {
+    background: #fafcfa;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 22px;
+    margin: 24px 0;
+  }
+  .toc h3 { margin-top: 0; }
+  .toc a { color: #4a6b1f; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<p class="disclaimer">本页由 AI 对照 NVIDIA 官方 PTX ISA 文档翻译，结合 CUDA 背景改写，仅供参考。</p>
+
+<div class="wrap">
+
+<h1>第 3 章 PTX 机器模型（PTX Machine Model）</h1>
+
+<p>NVIDIA PTX（Parallel Thread Execution，并行线程执行）是一套<strong>低层的虚拟机和指令集架构（ISA）</strong>，把 GPU 暴露成一个数据并行（data-parallel）的计算设备。本章概述 PTX 背后的硬件抽象模型——即 PTX 程序最终被翻译、映射到哪种物理执行单元上。</p>
+
+<div class="toc">
+<h3>本章目录</h3>
+<ul>
+  <li><a href="#s31">3.1 一组 SIMT 多处理器（A Set of SIMT Multiprocessors）</a></li>
+  <li><a href="#s32">3.2 独立线程调度（Independent Thread Scheduling）</a></li>
+  <li><a href="#s33">3.3 片上共享内存（On-chip Shared Memory）</a></li>
+</ul>
+</div>
+
+<div class="note">
+<b>结合 CUDA 背景：</b>NVIDIA 的 GPU 物理执行单元在 CUDA 编程模型里叫做 <span class="term">SM（Streaming Multiprocessor，流式多处理器）</span>。PTX 文档里使用的术语 <span class="term-en">SIMT multiprocessor</span> 就是同一个东西——PTX 作为「与机器无关」的中间表示，用更中性的「多处理器（multiprocessor）」来指代它，避免绑定具体代号的硬件。CUDA C 编译后先生成 PTX，再由 <code>ptxas</code> 在驱动安装期（install-time）翻译为目标 GPU 的原生指令（SASS）。
+</div>
+
+<!-- ============ 3.1 ============ -->
+<h2 id="s31">3.1 一组 SIMT 多处理器（A Set of SIMT Multiprocessors）</h2>
+
+<p>NVIDIA GPU 架构围绕一个<strong>可扩展的多线程 <span class="term">流式多处理器阵列（Streaming Multiprocessors，SMs）</span></strong>构建。当宿主（host）程序启动（invoke）一个 kernel 网格（grid）时，网格中的各个线程块（block）会被枚举并分发到那些尚有空闲执行能力的多处理器上。<span class="term-en">一个线程块内的所有线程会在同一个多处理器上并发执行</span>；当某个线程块执行完毕，新的线程块就会被派发到腾出资源的多处理器上继续运行。</p>
+
+<p>每个多处理器（即一个 SM）由以下部分构成：</p>
+<ul>
+  <li>多个 <span class="term">标量处理器核心（Scalar Processor，SP 核）</span>——对应 CUDA 语境里的「CUDA Core」；</li>
+  <li>一个多线程指令单元（multithreaded instruction unit）；</li>
+  <li>以及<strong>片上共享内存（on-chip shared memory）</strong>。</li>
+</ul>
+
+<p>多处理器在硬件层面创建、管理和执行并发线程，<strong>调度开销为零</strong>。它实现了单指令的屏障同步（barrier synchronization）。快速的屏障同步，加上轻量级的线程创建和零开销的线程调度，高效地支撑了<strong>极细粒度（fine-grained）的并行</strong>——例如，可以把问题按「一个线程负责一个数据元素」这样很低的粒度来切分（如图像中的一个像素、体数据中的一个体素 voxel、网格计算中的一个单元）。</p>
+
+<div class="note">
+<b>为什么这很关键：</b>「零调度开销」「硬件线程管理」意味着 GPU 可以同时驻留成百上千个线程，并在某个线程因访存停顿（stall）时立刻切换到另一个就绪线程去占用计算单元——这是 GPU 能隐藏内存延迟（而非依赖大缓存）的根本机制。
+</div>
+
+<p>为了管理同时运行、甚至可能执行多份不同程序的成百上千个线程，多处理器采用了一种被称为 <span class="term">SIMT（单指令多线程，single-instruction, multiple-thread）</span> 的架构。多处理器把<strong>每个线程映射到一个标量处理器核心</strong>，每个标量线程都拥有自己独立的指令地址和寄存器状态，彼此独立执行。多处理器的 SIMT 单元以「线程组」的方式创建、管理、调度并执行线程，这种线程组叫做 <span class="term">warp（线程束/经线）</span>。（这个术语源自纺织 weaving，是人类最早的并行线程技术。）组成某个 SIMT warp 的各个线程<strong>从同一程序地址同时起步</strong>，但除此之外可以自由地分支（branch）并独立执行。</p>
+
+<div class="note">
+<b>术语对照：</b><span class="term">warp</span> 在 CUDA 里固定为 32 个线程（可用 PTX 运行时立即数常量 <code>WARP_SZ</code> 获取）。它是 GPU 硬件调度和执行的最小单位。一个线程块被拆分成 warp 的方式是固定的：每个 warp 包含线程 ID 连续递增的一组线程，第一个 warp 包含 thread 0。
+</div>
+
+<p>当多处理器拿到一个或多个待执行的线程块时，会将其拆分为由 SIMT 单元调度的 warp。一个块被拆成 warp 的方式永远一致：每个 warp 包含线程 ID 连续、递增的线程，第一个 warp 包含 thread 0。</p>
+
+<p>在每一个指令发射（issue）时刻，SIMT 单元会挑选一个<strong>已就绪（ready）</strong>的 warp，并向该 warp 的<strong>活跃线程（active threads）</strong>发射下一条指令。一个 warp 一次只执行一条<strong>公共指令（common instruction）</strong>，因此<strong>当 warp 内所有线程的执行路径一致时，才能达到满效率</strong>。如果 warp 内的线程因为「数据相关的条件分支（data-dependent conditional branch）」而发散（diverge），那么该 warp 会<strong>串行地</strong>依次执行每条被走到的分支路径，并在执行某条路径时<strong>禁用（disable）</strong>不在该路径上的线程；当所有路径都执行完毕后，线程才重新汇聚（converge）回同一条执行路径。分支发散<strong>只发生在 warp 内部</strong>；不同的 warp 彼此独立执行，无论它们跑的是相同还是互不相交的代码路径。</p>
+
+<div class="note">
+<b>CUDA 实战提示：</b>「warp divergence（分支发散）」是性能杀手。比如在 if/else 里不同线程走不同分支，warp 要两个分支都串行走一遍，时间翻倍。写 kernel 时应尽量让同一 warp 内线程走相同分支——这与传统 CPU 代码里「cache line 大小」的角色类似：从<em>正确性</em>角度可以忽略它，但要做到<em>峰值性能</em>就必须在代码结构里考虑它。
+</div>
+
+<p>SIMT 架构与 <span class="term">SIMD（单指令多数据，Single Instruction Multiple Data）</span> 向量组织相似，都是用单条指令控制多个处理单元。一个关键区别在于：<strong>SIMD 向量组织会把「向量宽度」暴露给软件</strong>，而 <strong>SIMT 指令只描述单个线程的执行与分支行为</strong>。与 SIMD 向量机不同，SIMT 让程序员既能为独立标量线程写线程级并行代码，也能为协作线程写数据并行代码。从<em>正确性</em>角度，程序员基本可以忽略 SIMT 行为；但<strong>只要代码很少需要 warp 内线程发散，就能获得可观的性能提升</strong>。而在向量架构里，软件必须手动把访存合并（coalesce）成向量并手动管理发散。</p>
+
+<p>一个多处理器一次能处理多少个线程块，取决于<strong>每个线程需要多少寄存器、每个块需要多少共享内存</strong>——因为多处理器的寄存器和共享内存要在「这批块的所有线程」之间分摊。如果某个多处理器上连<strong>至少一个块</strong>所需的寄存器或共享内存都不够，该 kernel 就会<strong>启动失败（fail to launch）</strong>。</p>
+
+<figure>
+  <img src="images/ch3_hardware-model.png" alt="Hardware Model 硬件模型">
+  <figcaption>图 4（Figure 4）硬件模型（Hardware Model）：一组带有片上共享内存的 SIMT 多处理器。</figcaption>
+</figure>
+
+<p>一组带有片上共享内存的 SIMT 多处理器。</p>
+
+<!-- 背景架构图：线程层次与内存层次（属于文档整体 Machine Model 上下文） -->
+<h3>附：线程层次与内存层次（Machine Model 上下文）</h3>
+<p>下面两张图虽出自第 2 章「编程模型」，但正是 PTX 机器模型所抽象的线程/内存结构，故一并附上以便理解。</p>
+
+<figure>
+  <img src="images/ch3_grid-with-CTAs.png" alt="Grid with CTAs">
+  <figcaption>图 1（Figure 1）由 CTA 构成的网格（Grid with CTAs）。CTA 即 CUDA 的 thread block（线程块）。</figcaption>
+</figure>
+
+<figure>
+  <img src="images/ch3_grid-with-clusters.png" alt="Grid with clusters">
+  <figcaption>图 2（Figure 2）由 cluster 构成的网格（Grid with clusters）。cluster 即 CUDA 的 thread block cluster（线程块集群，sm_90 起引入）。</figcaption>
+</figure>
+
+<figure>
+  <img src="images/ch3_memory-hierarchy-with-clusters.png" alt="Memory Hierarchy">
+  <figcaption>图 3（Figure 3）内存层级（Memory Hierarchy），自 sm_90 起引入 cluster 层级。展示了 local / shared / global / constant / texture 等状态空间。</figcaption>
+</figure>
+
+<!-- ============ 3.2 ============ -->
+<h2 id="s32">3.2 独立线程调度（Independent Thread Scheduling）</h2>
+
+<p>在 <strong>Volta 架构之前</strong>，一个 warp 使用<strong>所有 32 个线程共享的单一程序计数器（program counter）</strong>，外加一个「活跃掩码（active mask）」来标记哪些线程是活跃的。结果就是：<strong>处于发散区域或不同执行状态的同一 warp 内线程，无法互相发信号或交换数据</strong>；而那些用锁（lock）或互斥量（mutex）保护、需要细粒度数据共享的算法，很容易因为竞争线程来自哪个 warp 而<strong>陷入死锁（deadlock）</strong>。</p>
+
+<p>从 <strong>Volta 架构（compute capability 7.0，sm_70）</strong>开始，<span class="term">独立线程调度（Independent Thread Scheduling）</span>让线程之间<strong>不受 warp 限制地实现完全并发</strong>。在独立线程调度下，GPU 为<strong>每个线程</strong>维护独立的执行状态（包括程序计数器和调用栈 call stack），并能以<strong>单线程粒度</strong>让出（yield）执行——无论是为了更好地利用执行资源，还是为了让某个线程等待另一个线程产出的数据。一个<strong>调度优化器（schedule optimizer）</strong>决定如何把同一 warp 里的活跃线程重新组合进 SIMT 单元。这既保留了与以往 NVIDIA GPU 相同的 SIMT 高吞吐特性，又带来了更大灵活性：线程现在可以<strong>以「亚 warp（sub-warp）粒度」发散并重新汇聚</strong>。</p>
+
+<div class="note">
+<b>独立线程调度的本质：</b>Volta 之前，warp 是一个「锁步（lock-step）」整体，靠 active mask 关掉不走的线程；Volta 之后，每个线程有自己的 PC，调度器在运行时动态把「走同一条路」的线程聚成 SIMT 组。这解决了旧架构上 warp 内线程无法互相通信/同步导致的死锁问题，但也改变了「warp 内线程一定同步」这一隐含假设。
+</div>
+
+<p>如果开发者曾对早期硬件架构的「warp 同步性（warp-synchronicity）」做过假设，<strong>独立线程调度可能导致实际参与执行代码的线程集合与预期大不相同</strong>。尤其要注意：任何「warp 同步式代码」（例如无显式同步的 warp 内归约 intra-warp reduction）都应重新审视，以确保与 Volta 及之后架构兼容。详见《CUDA 编程指南》中「Compute Capability 7.x」一节。</p>
+
+<!-- ============ 3.3 ============ -->
+<h2 id="s33">3.3 片上共享内存（On-chip Shared Memory）</h2>
+
+<p>如<a href="#s31">图 4（硬件模型）</a>所示，每个多处理器拥有以下<strong>四类</strong>片上内存：</p>
+<ul>
+  <li>每个处理器一组本地的 32 位 <span class="term">寄存器（registers）</span>；</li>
+  <li>一个并行数据缓存 / <span class="term">共享内存（shared memory）</span>，由所有标量处理器核心共享，<strong>共享内存状态空间（shared memory space）就驻留于此</strong>；</li>
+  <li>一个只读的 <span class="term">常量缓存（constant cache）</span>，由所有标量处理器核心共享，用于加速对常量内存空间（constant memory space，设备内存中的只读区域）的读取；</li>
+  <li>一个只读的 <span class="term">纹理缓存（texture cache）</span>，由所有标量处理器核心共享，用于加速对纹理内存空间（texture memory space，设备内存中的只读区域）的读取；每个多处理器通过一个<strong>纹理单元（texture unit）</strong>访问纹理缓存，该单元实现了各种寻址模式和数据过滤（filtering）。</li>
+</ul>
+
+<div class="note">
+<b>结合 CUDA 背景：</b><span class="term">shared memory</span> 是 GPU 上延迟最低（接近寄存器级别，约数十周期）的可编程片上存储，由同一 block 内所有线程共享，常用于线程间协作与数据复用（如 tile 矩阵乘）。它容量小（每 SM 几十到上百 KB，按 block 动态分配），是 kernel 优化的核心武器。<span class="term">local memory</span> 与 <span class="term">global memory</span> 都是设备内存（device memory）中的<strong>可读写区域</strong>——local memory 虽名为「本地」，实则落在显存上（用于存放寄存器溢出的变量），延迟高。
+</div>
+
+<p>local 与 global 内存空间都是设备内存（device memory）中的可读写区域。</p>
+
+<hr>
+<p style="font-size:13px;color:var(--muted)">翻译来源：NVIDIA PTX ISA Version 9.3 官方文档第 3 章《PTX Machine Model》。本页为 AI 对照原文、结合 CUDA 背景的改写式中文翻译，仅供参考，请以官方英文原文为准。</p>
+
+</div>
+</body>
+</html>
