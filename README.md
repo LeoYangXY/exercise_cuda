@@ -104,4 +104,4 @@ nsys / ncu。
 
 ## reading
 
-博客在 [reading/blogs.md](reading/blogs.md)。
+博客在 [reading/blogs.md](reading/blogs.md)。CUTLASS Hopper 例程阅读计划：[reading/cutlass_hopper_plan.md](reading/cutlass_hopper_plan.md)。
