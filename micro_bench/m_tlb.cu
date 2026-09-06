@@ -12,6 +12,7 @@ __global__ void chase(const int* b,int hops,long long* out){
 }
 int main(){
   cudaDeviceProp p; cudaGetDeviceProperties(&p,0);
+  int clk=0; cudaDeviceGetAttribute(&clk,cudaDevAttrClockRate,0);
   size_t N=1UL<<29;
   int* d; cudaMalloc(&d,N*4);
   long long* o; cudaMalloc(&o,16); long long ho[2];
@@ -24,7 +25,7 @@ int main(){
     chase<<<1,1>>>(d,(int)hops,o); cudaDeviceSynchronize();
     chase<<<1,1>>>(d,(int)hops,o);
     cudaMemcpy(ho,o,16,cudaMemcpyDeviceToHost);
-    printf("%9zu %5zu %8lld %6.1f\n",(1UL<<s)/1024,hops,ho[0],ho[0]*1e6/p.clockRate);
+    printf("%9zu %5zu %8lld %6.1f\n",(1UL<<s)/1024,hops,ho[0],ho[0]*1e6/clk);
   }
   return 0;
 }

@@ -37,7 +37,8 @@ void run(const char* nm,const char* unit){
 int main(){
   cudaDeviceProp p; cudaGetDeviceProperties(&p,0); SM=p.multiProcessorCount;
   cudaMalloc(&O,SM*2*256*4); cudaMalloc(&TK,8);
-  printf("H20 SM=%d clk=%.2fGHz\n",SM,p.clockRate/1e6);
+  int clk=0; cudaDeviceGetAttribute(&clk,cudaDevAttrClockRate,0);
+  printf("SM=%d clk=%.2fGHz\n",SM,clk/1e6);
   run<half,float,16,16,16>("fp16.f32acc","FLOP");
   run<half,half,16,16,16>("fp16.f16acc","FLOP");
   run<__nv_bfloat16,float,16,16,16>("bf16.f32acc","FLOP");

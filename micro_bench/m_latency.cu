@@ -24,7 +24,7 @@ __global__ void arith(int op,int n,long long* out){
  out[1]=(long long)(s*1e6f+(float)d+x);
 }
 int main(){
- cudaDeviceProp p; CK(cudaGetDeviceProperties(&p,0)); double MHz=p.clockRate/1000.0;
+ cudaDeviceProp p; CK(cudaGetDeviceProperties(&p,0)); int clk=0; CK(cudaDeviceGetAttribute(&clk,cudaDevAttrClockRate,0)); double MHz=clk/1000.0;
  printf("clock %.0f MHz\n",MHz);
  int n=1<<26; long long* a; CK(cudaMalloc(&a,n*8)); long long* h=(long long*)malloc(n*8);
  for(int i=0;i<n;++i) h[i]=(long long)((i+1)%n);

@@ -10,7 +10,9 @@ __global__ void bw(const float4* __restrict__ in,float4* out,size_t n){
 }
 int main(){
   cudaDeviceProp p; cudaGetDeviceProperties(&p,0);
-  int SM=p.multiProcessorCount, maxs=232448;
+  int SM=p.multiProcessorCount, maxs=0;
+  cudaDeviceGetAttribute(&maxs,cudaDevAttrMaxSharedMemoryPerBlockOptin,0);
+  if(maxs<49152) maxs=49152;
   cudaFuncSetAttribute(bw,cudaFuncAttributeMaxDynamicSharedMemorySize,maxs);
   size_t n=(size_t)1<<26; float4* in; cudaMalloc(&in,n*16); cudaMemset(in,0,n*16);
   float4* out; cudaMalloc(&out,16);

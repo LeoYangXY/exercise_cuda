@@ -11,7 +11,8 @@ __global__ void st(const float* g,unsigned mask,float* out){
 }
 int main(){
   cudaDeviceProp p; cudaGetDeviceProperties(&p,0);
-  printf("SM=%d L2=%.1fMB clk=%.2fGHz\n",p.multiProcessorCount,p.l2CacheSize/1048576.0,p.clockRate/1e6);
+  int clk=0; cudaDeviceGetAttribute(&clk,cudaDevAttrClockRate,0);
+  printf("SM=%d L2=%.1fMB clk=%.2fGHz\n",p.multiProcessorCount,p.l2CacheSize/1048576.0,clk/1e6);
   size_t big=1UL<<29; float* g; CK(cudaMalloc(&g,big)); CK(cudaMemset(g,0,big));
   float* out; CK(cudaMalloc(&out,16));
   int thr=256, blk=p.multiProcessorCount*8;

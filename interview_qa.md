@@ -18,6 +18,130 @@
 10. [C++ 八股](#10-c-八股)（13 题）
 
 
+**分块、warp 每次 16×32、一条 wgmma 内部 4 个 core matrix，这些对。**  
+右边那组 bank（row1 G0 → 8–11，row4 和 row0 撞）是按 **行距 32B 的紧凑 16×32** 算的，和红字「GM 行距 256B」矛盾，所以该打叉。真正 smem 一行是 **256B**，不拧时 8 行同一个 G 全是 **bank 0–3（8-way）**。
+
+下面按 **warp0、第一条 wgmma（k=0..31）** 把 GM / 不拧 / 拧完画完。G = 16B = 16 个 FP8。一行 256 个 K → **G0..G15**。
+
+---
+
+## 1. Warp 眼里 GMEM 长什么样
+
+GMEM 是整块 `A[128][256]`，K 连续，**行距 256B**。warp0 第一条指令只用灰的 G0、G1，但行与行之间隔着 G2..G15。
+
+```
+K →  G0  G1 | G2 G3 G4 G5 G6 G7 | G8 ...... G15
+     k0-31 |     k32-127       | k128-255
+             256B 一整行
+
+r0   [G0][G1] G2 G3 ... G15
+r1   [G0][G1] G2 G3 ... G15
+...
+r15  [G0][G1] G2 G3 ... G15     ← warp0 这 16 行
+r16  ...                         warp1
+...
+r63  ...                         warp3 / wg0
+r64-127                          wg1
+```
+
+warp 要的 16×32 **在 GM 里不连续**：`A[r][0:32]`，下一行跳 **+256B**。
+
+---
+
+## 2. TMA 一次搬完整个 BM×BK 吗？
+
+**逻辑上** 一个 stage 要的 A 是整块 `128×256`。  
+**硬件上** 一条 `cp.async.bulk.tensor` 的 inner box 受 swizzle 限制：
+
+| | 一条 TMA 的 box | 次数 |
+|---|---|---|
+| `SWIZZLE_NONE` | inner 最大 256 元素 → 可以 **一次** `128×256` | 1 |
+| `SWIZZLE_128B` | inner ≤ **128B** → 每次 `128 行 × 128 K` | **2**（k=0..127，再 k=128..255） |
+
+128B 模式里还有更小的 **swizzle atom = 8 行 × 128B**（XOR 的单位）。一条 TMA 写的是 **整个 box**：M 上 128/8=**16 颗** atom 叠起来，K 上 **1 颗** 那么宽。所以：
+
+```
+TMA 指令（box）≠ swizzle atom（8×128B）≠ WGMMA tile（64×32）
+BK=256 + 128B swizzle：2 条 TMA 才能填满 128×256 smem
+```
+
+---
+
+## 3. 不 swizzle：smem = GM 线性，一条 wgmma
+
+smem 一行仍 256B：`row r` 的 G0 在 `r*256`。
+
+**warp0 第一条 wgmma** 内部 4 拍（只碰 G0/G1、行 0–15）：
+
+```
+① 行0–7  × G0     ② 行0–7  × G1
+③ 行8–15 × G0     ④ 行8–15 × G1
+```
+
+**① 的 bank（行距 256B）：**
+
+```
+r0 G0: byte 0      → bank 0–3
+r1 G0: byte 256    → bank 0–3
+r2 G0: byte 512    → bank 0–3
+...
+r7 G0: 全是 bank 0–3     → 8-way
+```
+
+②：8 行 G1 全是 bank 4–7，也是 8-way。  
+③④：行 8–15 的 G0 起点 `8*256=2048`，`2048/4 % 32 = 0`，**还是 bank 0–3**（下一拍，不和 ① 抢同一 cycle）。
+
+你写的 8–11、16–19 只有「smem 里只塞了 16×32、行距 32B」才成立；TMA 搬的是整行 256B，不是那种紧凑块。
+
+---
+
+## 4. Swizzle 128B 之后：smem 变啥，同一条 wgmma
+
+K=256 > 128 → smem **横着 2 列** swizzle atom（不是每行 256B 再 XOR）：
+
+```
+[所有 128 行的左半：每行 128B，8×128B atom 内 XOR]   k=0..127  = 逻辑 G0..G7
+[所有 128 行的右半：同样拧]                         k=128..255 = 逻辑 G8..G15
+```
+
+**左半一颗 8×128B**（行 0–7）就是你熟悉的表，格子里是逻辑 G：
+
+```
+槽     0    1    2    3    4    5    6    7
+r0     G0   G1   G2   G3   G4   G5   G6   G7
+r1     G1   G0   G3   G2   G5   G4   G7   G6
+...
+r7     G7   G6   G5   G4   G3   G2   G1   G0
+```
+
+行 8–15 再贴一张（atom1）。warp0 第一条 wgmma 只用 **左两列 G0、G1**：
+
+```
+① 8 行逻辑 G0：物理槽 0,1,2,3,4,5,6,7 → 8 个 bank group，0-way
+② 8 行逻辑 G1：槽 1,0,3,2,... 同样铺满
+③④ 在行 8–15 那颗 atom 上重复
+```
+
+后面 7 条 wgmma：同一 16 行，依次吃 G2G3 … 最后两条在 **右半** atom 吃 G14G15。
+
+WGMMA 描述符 `B128` 按这张表寻址；TMA 写的时候已经按同一张表摆好。
+
+---
+
+## 5. 和你这页的对照
+
+| 你写的 | 结论 |
+|---|---|
+| 2 wg × K 循环 8；warp 每次 16×32 | 对 |
+| 一条指令内部 4 个 8×16B | 对 |
+| GM 行距 256B，不是 32B | 对，bank 必须用这个 |
+| row1 G0 → bank 8–11 | 错（那是行距 32B）；应为仍是 0–3，8-way |
+| TMA 一次搬完 128×256 | **仅 NONE 可以**；128B swizzle 要 **2 条 TMA**，每条 box 里再含 16 颗 8×128B atom |
+
+
+提醒
+
+
 ---
 
 # 1. CUDA Kernel 基础与优化
@@ -175,137 +299,10 @@ total_loss = task_loss + alpha * aux_loss  # alpha 通常 0.01
 
 ---
 
-【仔细】 ## 4.13 Context Parallelism / Ring Attention？
-
-**【口述版】**
-Context Parallelism 将超长序列沿 sequence 维度切分到多卡，每卡只持有部分 KV。Ring Attention 是其核心算法：各卡把自己的 KV block 沿环形拓扑传递，每卡每步计算一部分 attention，通过 online softmax 逐步累积完整的 attention 输出，实现近线性扩展。
-
-**【详细版】**
-
-**动机**：
-- 标准 Self-Attention 的显存 $O(S^2)$，计算 $O(S^2 \cdot d)$
-- FlashAttention 把显存降到 $O(S)$，但 S 超大（>128K）时单卡的计算量仍然太大
-- 需要把 sequence 切分到多卡
-
-**Ring Attention 算法**：
-```
-假设 4 卡，序列被切成 4 段：Q0,K0,V0 在卡0，Q1,K1,V1 在卡1 ...
-
-Round 0: 卡0 计算 Attn(Q0, K0, V0) 同时把 K0,V0 发给卡1（环形）
-Round 1: 卡0 计算 Attn(Q0, K3, V3) 同时把 K3,V3 发给卡1
-Round 2: 卡0 计算 Attn(Q0, K2, V2) 同时把 K2,V2 发给卡1
-Round 3: 卡0 计算 Attn(Q0, K1, V1) 同时把 K1,V1 发给卡1
-
-每 round 通过 online softmax 将新的 partial attention 结果与之前累积的结果合并
-```
-
-**Online Softmax 合并（FlashAttention 的核心）**：
-```python
-# 合并两个 partial attention 结果
-# block 1: O1 = softmax(Q@K1^T) @ V1, 记录 max1, sum1
-# block 2: O2 = softmax(Q@K2^T) @ V2, 记录 max2, sum2
-
-new_max = max(max1, max2)
-scale1 = exp(max1 - new_max)
-scale2 = exp(max2 - new_max)
-new_sum = sum1 * scale1 + sum2 * scale2
-
-O_merged = (O1 * sum1 * scale1 + O2 * sum2 * scale2) / new_sum
-```
-
-**通信与计算的 overlap**：
-- 关键优化：传 KV 的 P2P 通信和 attention 计算同时进行
-- 每 round 的计算量：batch × (S/N) × (S/N) × d（一个 Q block 对一个 KV block）
-- 每 round 的通信量：2 × batch × (S/N) × d × sizeof（一组 KV）
-- 只要计算时间 > 通信时间，通信就可以被完全隐藏
-- 当 S/N 足够大时（通常 S/N > 2048），计算占主导
-
-**Causal Mask 的处理**：
-- Causal attention 中，Q_i 只需要 attend 到 K_j（j ≤ i）
-- 对角线以下的 block 需要 causal mask，对角线以上的 block 完全跳过
-- 优化：检测到全零 block 时跳过计算 → 实际计算量约为全量的一半
-
-**Megatron Context Parallelism 实现**：
-- 使用 zigzag 切分而非连续切分，平衡 causal mask 带来的计算不均衡
-- 例如 seq=[0..7] 4 卡：卡0=[0,7], 卡1=[1,6], 卡2=[2,5], 卡3=[3,4]
-- 每卡的有效计算量接近相等
-
-**【追问/扩展】**
-- **Ring Attention vs Ulysses**：Ring Attention 切 seq 传 KV，用 P2P；Ulysses 切 seq 但用 AlltoAll 按 head 重分布。Ring 更适合超长序列（通信可 overlap），Ulysses 更适合中等长度（AlltoAll 延迟更低）。
-- **Striped Attention**：类似 zigzag，把 token 交错分配到各卡，进一步平衡负载。
-- **与 FlashAttention 的关系**：Ring Attention 在每卡内部使用 FlashAttention 做 block attention 计算。
-- **实际应用**：Llama 3 使用 CP=8 训练 128K 上下文长度。
-
 ---
 
 # 5. 通信（NCCL / NVSHMEM / RDMA）
 
-【随意】 ## 5.1 NCCL 是什么？支持哪些集合通信操作？
-
-**【口述版】**
-NCCL（NVIDIA Collective Communications Library）是 NVIDIA 针对多 GPU / 多节点场景的高性能集合通信库，自动感知 NVLink / PCIe / InfiniBand 拓扑，支持 AllReduce、Broadcast、Reduce、AllGather、ReduceScatter、AllToAll 等操作，是 PyTorch DDP / FSDP / Megatron-LM 底层的通信基础设施。
-
-**【详细版】**
-
-**核心定位**：
-- MPI 的集合通信对 GPU 场景不友好（需要 host 中转），NCCL 直接在 GPU buffer 之间通信
-- 自动检测拓扑：NVLink、NVSwitch、PCIe、InfiniBand、RoCE，构建最优通信路径
-- 支持 CUDA stream 语义，通信操作可以和计算 overlap
-
-**支持的集合通信操作**：
-
-| 操作 | 语义 | 典型用途 |
-|---|---|---|
-| `ncclAllReduce` | 所有 rank 贡献数据，所有 rank 得到 reduce 结果 | DDP 梯度同步 |
-| `ncclBroadcast` | 一个 root rank 广播到所有 rank | 参数初始化 |
-| `ncclReduce` | 所有 rank 贡献数据，只有 root 得到结果 | 聚合 loss |
-| `ncclAllGather` | 每个 rank 贡献一份，所有 rank 得到拼接结果 | FSDP 前向 gather 参数 |
-| `ncclReduceScatter` | 先 reduce 再 scatter，每个 rank 得到一份 | FSDP/ZeRO 反向梯度 |
-| `ncclAllToAll` | 每个 rank 给每个 rank 发不同数据 | MoE expert 路由 |
-| `ncclSend` / `ncclRecv` | 点对点通信 | Pipeline parallelism |
-
-**基本使用模式**：
-```cpp
-ncclComm_t comm;
-ncclCommInitRank(&comm, nRanks, id, myRank);
-
-// 在 CUDA stream 上异步执行
-ncclAllReduce(sendbuf, recvbuf, count, ncclFloat, ncclSum, comm, stream);
-
-// 可以 group 多个操作，NCCL 自动优化
-ncclGroupStart();
-ncclAllReduce(buf1, buf1, n1, ncclFloat, ncclSum, comm, stream);
-ncclAllReduce(buf2, buf2, n2, ncclFloat, ncclSum, comm, stream);
-ncclGroupEnd();
-```
-
-**NCCL 内部架构**：
-```
-┌─────────────────────────────────────────────┐
-│              User API (ncclAllReduce...)     │
-├─────────────────────────────────────────────┤
-│         Topology Detection (XML/PCI)        │
-│         Graph Search (最优通道分配)           │
-├─────────────────────────────────────────────┤
-│       Protocol Layer (LL / LL128 / Simple)  │
-├─────────────────────────────────────────────┤
-│        Transport Layer                      │
-│   ┌──────┐  ┌──────┐  ┌───────┐  ┌──────┐ │
-│   │P2P   │  │SHM   │  │NET    │  │Coll  │ │
-│   │NVLink│  │共享内存│  │IB/RoCE│  │NET   │ │
-│   └──────┘  └──────┘  └───────┘  └──────┘ │
-├─────────────────────────────────────────────┤
-│        Kernel（GPU 端 proxy-less 执行）       │
-└─────────────────────────────────────────────┘
-```
-
-**【追问/扩展】**
-- **ncclGroup 的作用**：将多个小通信 fuse 成一次 launch，减少 kernel launch 开销，也让 NCCL 有机会做跨操作优化。
-- **ncclCommInitAll vs ncclCommInitRank**：前者单进程多 GPU，后者多进程各自初始化（更常用）。
-- **NCCL 版本演进**：NCCL 2.x 引入多节点支持；2.12+ 支持 `ncclAllToAll`；2.18+ 支持 NVSwitch 多节点（NVL72）；2.19+ 引入 NVLS（NVLink SHARP）。
-- **错误处理**：`ncclCommGetAsyncError` 可异步检查通信错误，生产中用于检测 GPU 掉卡。
-
----
 
 【随意】 ## 5.2 AllReduce 的算法？Ring AllReduce vs Tree AllReduce？
 

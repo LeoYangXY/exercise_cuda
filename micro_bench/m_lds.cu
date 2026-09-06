@@ -25,10 +25,11 @@ template<int W,int C> __global__ void kl(float* o,long long* tk,int it){
   for(int u=0;u<8;++u) s+=q[u][0]+q[u][1]+q[u][2]+q[u][3];
   o[threadIdx.x]=(float)s; if(threadIdx.x==0)*tk=b-a;
 }
-float* O; long long* T;
+float* O; long long* T; int MAXS=101376;
 template<int W,int C> void run(const char* nm,int nw){
   int thr=nw*32, it=4000, smem=((thr>>5)+8)*4096;
-  cudaFuncSetAttribute(kl<W,C>,cudaFuncAttributeMaxDynamicSharedMemorySize,232448);
+  if(smem>MAXS){ printf("%-10s nw=%2d SKIP (need %d B smem, max %d)\n",nm,nw,smem,MAXS); return; }
+  cudaFuncSetAttribute(kl<W,C>,cudaFuncAttributeMaxDynamicSharedMemorySize,MAXS);
   long long t; kl<W,C><<<1,thr,smem>>>(O,T,it); cudaDeviceSynchronize();
   kl<W,C><<<1,thr,smem>>>(O,T,it); cudaMemcpy(&t,T,8,cudaMemcpyDeviceToHost);
   double inst=(double)it*8*nw;
@@ -36,6 +37,7 @@ template<int W,int C> void run(const char* nm,int nw){
   printf("%-10s nw=%2d cyc/inst=%7.2f  B/clk/SM=%7.1f\n",nm,nw,(double)t/inst,B/(double)t);
 }
 int main(){
+  cudaDeviceGetAttribute(&MAXS,cudaDevAttrMaxSharedMemoryPerBlockOptin,0);
   cudaMalloc(&O,4096*4); cudaMalloc(&T,8);
   printf("== width scan (conflict-free) ==\n");
   run<1,1>("LDS.32",1); run<1,1>("LDS.32",8); run<1,1>("LDS.32",32);
