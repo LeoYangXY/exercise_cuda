@@ -142,6 +142,434 @@ WGMMA 描述符 `B128` 按这张表寻址；TMA 写的时候已经按同一张�
 提醒
 
 
+
+
+
+可以。下面给你两个完整流程图。约定：
+
+```text
+P = TP size
+C = CP size
+R = EP size
+A = attention head 数
+D = H/A
+I = MLP intermediate size
+```
+
+所有 shape 默认表示**单个 rank 上的 shape**，布局是 `[S, B, H]`。
+
+注意：图中的 `SP` 和 `CP` 是两种 sequence 切分模式，一次运行通常选择其中一种：
+
+```text
+Megatron SP：本地 sequence = S/P
+Ring CP：本地 sequence = S/C
+```
+
+---
+
+## 流程图 1：Attention + Dense MLP
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                 Attention + Dense MLP Decoder Layer          │
+└─────────────────────────────────────────────────────────────┘
+
+输入 hidden states
+        │
+        ├──────────────────── SP + TP 模式 ────────────────────┐
+        │                                                       │
+        │  h: [S/P, B, H]                                      │
+        │       │                                               │
+        │       ▼                                               │
+        │  LayerNorm                                             │
+        │  [S/P, B, H] → [S/P, B, H]                            │
+        │       │                                               │
+        │       ▼                                               │
+        │  AllGather_SP，沿 sequence 维                        │
+        │  [S/P, B, H] → [S, B, H]                              │
+        │       │                                               │
+        │       ▼                                               │
+        │  QKV Linear，Column TP                                │
+        │  Wqkv: [H, 3H/P]                                      │
+        │  [S, B, H] × [H, 3H/P]                                │
+        │       → QKV: [S, B, 3H/P]                             │
+        │       │                                               │
+        │       ▼                                               │
+        │  Reshape / Split Heads                                │
+        │  Q,K,V: [S, B, A/P, D]                                │
+        │       │                                               │
+        │       ▼                                               │
+        │  Local Attention                                      │
+        │  QKᵀ score，逻辑 shape: [B, A/P, S, S]                │
+        │  输出 O: [S, B, A/P, D]                               │
+        │       │                                               │
+        │       ▼                                               │
+        │  Reshape                                                │
+        │  [S, B, A/P, D] → [S, B, H/P]                         │
+        │       │                                               │
+        │       ▼                                               │
+        │  Output Linear，Row TP                                │
+        │  Wo: [H/P, H]                                          │
+        │  [S, B, H/P] × [H/P, H]                               │
+        │       → partial: [S, B, H]                            │
+        │       │                                               │
+        │       ▼                                               │
+        │  ReduceScatter_SP                                     │
+        │  [S, B, H] → [S/P, B, H]                              │
+        │       │                                               │
+        │       ▼                                               │
+        │  Dropout + Residual                                   │
+        │  [S/P, B, H] + [S/P, B, H]                            │
+        │       → [S/P, B, H]                                    │
+        │       │                                               │
+        │       ▼                                               │
+        │  LayerNorm                                             │
+        │  [S/P, B, H] → [S/P, B, H]                            │
+        │       │                                               │
+        │       ▼                                               │
+        │  AllGather_SP                                          │
+        │  [S/P, B, H] → [S, B, H]                              │
+        │       │                                               │
+        │       ▼                                               │
+        │  Dense MLP Up Projection，Column TP                   │
+        │  Wup: [H, I/P]                                         │
+        │  [S, B, H] × [H, I/P]                                 │
+        │       → [S, B, I/P]                                    │
+        │       │                                               │
+        │       ▼                                               │
+        │  GELU / SwiGLU                                        │
+        │  [S, B, I/P] → [S, B, I/P]                            │
+        │       │                                               │
+        │       ▼                                               │
+        │  Dense MLP Down Projection，Row TP                    │
+        │  Wdown: [I/P, H]                                       │
+        │  [S, B, I/P] × [I/P, H]                               │
+        │       → partial: [S, B, H]                            │
+        │       │                                               │
+        │       ▼                                               │
+        │  ReduceScatter_SP                                     │
+        │  [S, B, H] → [S/P, B, H]                              │
+        │       │                                               │
+        │       ▼                                               │
+        │  Dropout + Residual                                   │
+        │  [S/P, B, H] → [S/P, B, H]                            │
+        │                                                       │
+        └───────────────────────────────────────────────────────┘
+
+
+        ├──────────────────── CP + TP 模式 ─────────────────────┐
+        │                                                       │
+        │  h: [S/C, B, H]                                      │
+        │       │                                               │
+        │       ▼                                               │
+        │  LayerNorm                                             │
+        │  [S/C, B, H] → [S/C, B, H]                            │
+        │       │                                               │
+        │       ▼                                               │
+        │  QKV Linear，Column TP                                │
+        │  Wqkv: [H, 3H/P]                                      │
+        │  [S/C, B, H] × [H, 3H/P]                              │
+        │       → QKV: [S/C, B, 3H/P]                           │
+        │       │                                               │
+        │       ▼                                               │
+        │  Reshape / Split Heads                                │
+        │  Q,K,V: [S/C, B, A/P, D]                              │
+        │       │                                               │
+        │       ▼                                               │
+        │  Ring Attention                                      │
+        │  Q 本地保持: [S/C, B, A/P, D]                         │
+        │  每轮 Ring P2P 发送/接收 K,V:                         │
+        │      [S/C, B, A/P, D]                                 │
+        │  每轮 score block: [B, A/P, S/C, S/C]                 │
+        │  C 轮后输出: [S/C, B, A/P, D]                         │
+        │       │                                               │
+        │       ▼                                               │
+        │  Reshape                                                │
+        │  [S/C, B, A/P, D] → [S/C, B, H/P]                     │
+        │       │                                               │
+        │       ▼                                               │
+        │  Output Linear，Row TP                                │
+        │  [S/C, B, H/P] × [H/P, H]                             │
+        │       → partial: [S/C, B, H]                          │
+        │       │                                               │
+        │       ▼                                               │
+        │  AllReduce_TP                                         │
+        │  [S/C, B, H] → [S/C, B, H]                            │
+        │       │                                               │
+        │       ▼                                               │
+        │  Dropout + Residual                                   │
+        │  [S/C, B, H] → [S/C, B, H]                            │
+        │       │                                               │
+        │       ▼                                               │
+        │  LayerNorm                                             │
+        │  [S/C, B, H] → [S/C, B, H]                            │
+        │       │                                               │
+        │       ▼                                               │
+        │  Dense MLP Up Projection，Column TP                   │
+        │  [S/C, B, H] × [H, I/P]                               │
+        │       → [S/C, B, I/P]                                  │
+        │       │                                               │
+        │       ▼                                               │
+        │  GELU / SwiGLU                                        │
+        │  [S/C, B, I/P] → [S/C, B, I/P]                        │
+        │       │                                               │
+        │       ▼                                               │
+        │  Dense MLP Down Projection，Row TP                    │
+        │  [S/C, B, I/P] × [I/P, H]                             │
+        │       → partial: [S/C, B, H]                           │
+        │       │                                               │
+        │       ▼                                               │
+        │  AllReduce_TP                                         │
+        │  [S/C, B, H] → [S/C, B, H]                            │
+        │       │                                               │
+        │       ▼                                               │
+        │  Dropout + Residual                                   │
+        │  [S/C, B, H] → [S/C, B, H]                            │
+        │                                                       │
+        └───────────────────────────────────────────────────────┘
+```
+
+Dense Decoder 中：
+
+```text
+TP：
+  QKV 按 head 切
+  Attention output projection 按 hidden 输入维切
+  MLP up 按 intermediate 切
+  MLP down 按 intermediate 输入切
+
+SP：
+  激活的 sequence 维为 S/P
+  Column Linear 前 AllGather
+  Row Linear 后 ReduceScatter
+
+CP：
+  Attention 的 sequence 维为 S/C
+  Ring 传递 K/V
+  不需要把完整 S 一次性 AllGather
+```
+
+---
+
+## 流程图 2：Attention + MoE MLP
+
+Attention 部分仍然是上面的 Attention；区别是 MLP 换成了 Router + Expert。
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                    Attention + MoE Decoder Layer              │
+└─────────────────────────────────────────────────────────────┘
+
+输入 hidden states
+        │
+        ├────────────── SP + TP Attention ─────────────────────┐
+        │                                                       │
+        │  h: [S/P, B, H]                                      │
+        │       │                                               │
+        │       ▼                                               │
+        │  LayerNorm                                             │
+        │  [S/P, B, H] → [S/P, B, H]                            │
+        │       │                                               │
+        │       ▼                                               │
+        │  AllGather_SP                                         │
+        │  [S/P, B, H] → [S, B, H]                              │
+        │       │                                               │
+        │       ▼                                               │
+        │  QKV Column TP                                        │
+        │  [S, B, H] × [H, 3H/P]                               │
+        │       → [S, B, 3H/P]                                  │
+        │       → Q,K,V: [S, B, A/P, D]                         │
+        │       │                                               │
+        │       ▼                                               │
+        │  Local Attention                                      │
+        │  score: [B, A/P, S, S]                               │
+        │  output: [S, B, A/P, D]                               │
+        │       │                                               │
+        │       ▼                                               │
+        │  Output Row TP                                        │
+        │  [S, B, H/P] → partial [S, B, H]                      │
+        │       │                                               │
+        │       ▼                                               │
+        │  ReduceScatter_SP                                     │
+        │  [S, B, H] → [S/P, B, H]                              │
+        │       │                                               │
+        │       ▼                                               │
+        │  Dropout + Residual                                   │
+        │  [S/P, B, H] → [S/P, B, H]                            │
+        │                                                       │
+        └───────────────────────────────────────────────────────┘
+                               │
+                               ▼
+        ┌────────────────────────────────────────────────────────┐
+        │                  MoE MLP：SP + EP                      │
+        └────────────────────────────────────────────────────────┘
+
+        x: [S/P, B, H]
+        │
+        ▼
+    LayerNorm
+    [S/P, B, H] → [S/P, B, H]
+        │
+        ▼
+    Flatten Token
+    [S/P, B, H] → [T, H]
+
+    T = B × S/P
+        │
+        ▼
+    Router Linear
+    Wrouter: [H, E]
+    [T, H] × [H, E]
+        → logits: [T, E]
+        │
+        ▼
+    Top-k
+    logits: [T, E]
+        → expert_ids: [T, K]
+        → gate_scores: [T, K]
+        │
+        ▼
+    Token Permute / Expand
+    [T, H] → [T×K, H]
+        │
+        ▼
+    按目标 EP rank 分桶
+
+    发往 rank j:
+    [n(i→j), H]
+
+        │
+        ▼
+    AlltoAll_EP：Dispatch
+    每个 rank 发送:
+    [n(i→0), H], [n(i→1), H], ..., [n(i→R-1), H]
+
+    每个 rank 接收:
+    [Nrecv, H]
+
+    Nrecv = 所有 source rank 发来的 token 副本数
+        │
+        ▼
+    按本地 expert 分组
+
+    Expert e 输入:
+    [ne, H]
+
+    当前 EP rank 只保存 E/R 个 expert
+        │
+        ├─────────────────────────────────────────────┐
+        │                                             │
+        │  Expert 内部不使用 TP                        │
+        │  [ne, H]                                    │
+        │      │                                      │
+        │      ▼                                      │
+        │  Up: [ne, H] → [ne, I]                      │
+        │      │                                      │
+        │      ▼                                      │
+        │  Activation: [ne, I] → [ne, I]              │
+        │      │                                      │
+        │      ▼                                      │
+        │  Down: [ne, I] → [ne, H]                    │
+        │                                             │
+        └─────────────────────────────────────────────┘
+
+        或者
+
+        ┌─────────────────────────────────────────────┐
+        │  Expert 内部继续使用 TP_e                    │
+        │  [ne, H]                                     │
+        │      │                                       │
+        │      ▼                                       │
+        │  Up Column TP_e                              │
+        │  [ne, H] × [H, I/TP_e]                       │
+        │      → [ne, I/TP_e]                          │
+        │      │                                       │
+        │      ▼                                       │
+        │  Activation                                   │
+        │  [ne, I/TP_e] → [ne, I/TP_e]                 │
+        │      │                                       │
+        │      ▼                                       │
+        │  Down Row TP_e                                │
+        │  [ne, I/TP_e] × [I/TP_e, H]                  │
+        │      → partial [ne, H]                       │
+        │      │                                       │
+        │      ▼                                       │
+        │  AllReduce_TP_e                              │
+        │  partial [ne, H] → [ne, H]                   │
+        │                                             │
+        └─────────────────────────────────────────────┘
+        │
+        ▼
+    AlltoAll_EP：Combine
+    [Nrecv, H] → [T×K, H]
+        │
+        ▼
+    Unpermute + Gate Weighted Sum
+    [T×K, H] + gate_scores [T, K]
+        → [T, H]
+        │
+        ▼
+    Reshape
+    [T, H] → [S/P, B, H]
+        │
+        ▼
+    Dropout + Residual
+    [S/P, B, H] → [S/P, B, H]
+
+        │
+        ▼
+    Decoder Layer 输出
+    [S/P, B, H]
+```
+
+如果使用 **CP + EP**，MoE 部分只需要把本地 sequence 换成 `S/C`：
+
+```text
+x: [S/C, B, H]
+Flatten: [S/C, B, H] → [T, H]
+
+T = B × S/C
+
+Router:
+[T, H] → [T, E] → ids/scores [T, K]
+
+EP AlltoAll:
+[n(i→j), H] → [Nrecv, H]
+
+Local Expert:
+[ne, H] → [ne, I] → [ne, H]
+
+Combine:
+[Nrecv, H] → [T×K, H] → [T, H]
+                  → [S/C, B, H]
+```
+
+最后对应关系就是：
+
+```text
+Dense Decoder:
+  Attention = TP + SP 或 TP + CP
+  MLP       = TP + SP 或 TP + CP
+  EP        = 不存在
+
+MoE Decoder:
+  Attention = TP + SP 或 TP + CP
+  MLP       = EP +（可选 Expert TP）+ SP/CP
+```
+
+其中：
+
+```text
+SP：AllGather / ReduceScatter，处理 activation 的 sequence 维
+TP：Column Linear / Row Linear，处理 head、hidden、intermediate 维
+EP：AlltoAll，处理 token 到 expert 的重新分布
+CP：Ring P2P 或 Ulysses AlltoAll，处理 Attention 的 sequence 维
+```
+
+
+
+
+
 ---
 
 # 1. CUDA Kernel 基础与优化
